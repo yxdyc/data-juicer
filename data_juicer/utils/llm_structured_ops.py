@@ -3,6 +3,7 @@
 Shared by llm_extract_mapper, llm_condition_filter; reusable for DataFrame/SQL/DB
 by adapting input to (text, schema/condition). Aligns with existing llm_* naming.
 """
+
 import json
 import logging
 from typing import Any, Dict, Optional
@@ -25,13 +26,10 @@ DEFAULT_EXTRACT_USER_TEMPLATE = (
     "# Output\nReturn a single JSON object with the above keys. No explanation."
 )
 
-DEFAULT_CONDITION_SYSTEM = (
-    "You are a binary classifier. Answer only 'yes' or 'no', nothing else."
-)
+DEFAULT_CONDITION_SYSTEM = "You are a binary classifier. Answer only 'yes' or 'no', nothing else."
 
 DEFAULT_CONDITION_USER_TEMPLATE = (
-    "# Text\n{text}\n\n# Condition\n{condition}\n\n"
-    "Does the text satisfy the condition? Answer yes or no."
+    "# Text\n{text}\n\n# Condition\n{condition}\n\n" "Does the text satisfy the condition? Answer yes or no."
 )  # noqa: E501
 
 
@@ -76,10 +74,9 @@ def call_llm_sync(
     try:
         if enable_vllm:
             from data_juicer.utils.lazy_loader import LazyLoader
+
             vllm_mod = LazyLoader("vllm")
-            sp = vllm_mod.SamplingParams(**sampling_params) if isinstance(
-                sampling_params, dict
-            ) else sampling_params
+            sp = vllm_mod.SamplingParams(**sampling_params) if isinstance(sampling_params, dict) else sampling_params
             response = model.chat(messages, sp)
             return (response[0].outputs[0].text or "").strip()
         if is_hf_model:
@@ -103,9 +100,7 @@ def extract_one(
     sampling_params: Optional[Dict] = None,
 ) -> Dict[str, Any]:
     """Extract structured fields from input_text using the model. Returns dict."""
-    user_content = get_extract_prompt(
-        input_text, output_schema, knowledge_grounding
-    )
+    user_content = get_extract_prompt(input_text, output_schema, knowledge_grounding)
     messages = [
         {"role": "system", "content": system_prompt or DEFAULT_EXTRACT_SYSTEM},
         {"role": "user", "content": user_content},

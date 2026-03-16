@@ -3,6 +3,7 @@
 Part of the llm_* ops family; yes/no by user-specified condition string
 (unlike llm_analysis_filter which uses fixed dimensions).
 """
+
 from typing import Optional
 
 from loguru import logger
@@ -66,9 +67,7 @@ class LLMConditionFilter(Filter):
         self.is_hf_model = is_hf_model
         self.enable_vllm = enable_vllm
         model_params = model_params or {}
-        sampling_params = update_sampling_params(
-            sampling_params or {}, api_or_hf_model, enable_vllm
-        )
+        sampling_params = update_sampling_params(sampling_params or {}, api_or_hf_model, enable_vllm)
         self.sampling_params = sampling_params
 
         if enable_vllm:
@@ -110,9 +109,7 @@ class LLMConditionFilter(Filter):
             return str(v) if v is not None else None
         return None
 
-    def compute_stats_single(
-        self, sample: dict, rank: Optional[int] = None, context: bool = False
-    ):
+    def compute_stats_single(self, sample: dict, rank: Optional[int] = None, context: bool = False):
         if StatsKeys.llm_condition_filter_result in sample.get(Fields.stats, {}):
             return sample
         if Fields.stats not in sample:
@@ -135,7 +132,9 @@ class LLMConditionFilter(Filter):
         for _ in range(self.try_num):
             try:
                 result = condition_filter_one(
-                    text, self.condition, model,
+                    text,
+                    self.condition,
+                    model,
                     knowledge_grounding=kg,
                     enable_vllm=self.enable_vllm,
                     is_hf_model=self.is_hf_model,

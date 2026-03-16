@@ -3,6 +3,7 @@
 Part of the llm_* ops family; distinguished by user-provided output_schema
 rather than fixed evaluation dimensions.
 """
+
 from typing import Dict, List, Optional
 
 from loguru import logger
@@ -75,9 +76,7 @@ class LLMExtractMapper(Mapper):
         self.is_hf_model = is_hf_model
         self.enable_vllm = enable_vllm
         model_params = model_params or {}
-        sampling_params = update_sampling_params(
-            sampling_params or {}, api_or_hf_model, enable_vllm
-        )
+        sampling_params = update_sampling_params(sampling_params or {}, api_or_hf_model, enable_vllm)
         self.sampling_params = sampling_params
 
         if enable_vllm:
