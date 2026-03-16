@@ -43,10 +43,10 @@ Data-Juicer 中的算子分为以下 8 种类型。
 |------|:------:|-------------|
 | [aggregator](#aggregator) | 4 | Aggregate for batched samples, such as summary or conclusion. 对批量样本进行汇总，如得出总结或结论。 |
 | [deduplicator](#deduplicator) | 10 | Detects and removes duplicate samples. 识别、删除重复样本。 |
-| [filter](#filter) | 56 | Filters out low-quality samples. 过滤低质量样本。 |
+| [filter](#filter) | 57 | Filters out low-quality samples. 过滤低质量样本。 |
 | [formatter](#formatter) | 8 | Discovers, loads, and canonicalizes source data. 发现、加载、规范化原始数据。 |
 | [grouper](#grouper) | 3 | Group samples to batched samples. 将样本分组，每一组组成一个批量样本。 |
-| [mapper](#mapper) | 105 | Edits and transforms samples. 对数据样本进行编辑和转换。 |
+| [mapper](#mapper) | 106 | Edits and transforms samples. 对数据样本进行编辑和转换。 |
 | [pipeline](#pipeline) | 3 | Applies dataset-level processing; both input and output are datasets. 执行数据集级别的操作，输入和输出均为完整数据集。 |
 | [selector](#selector) | 5 | Selects top samples based on ranking. 基于排序选取高质量样本。 |
 
@@ -122,6 +122,7 @@ All the specific operators are listed below, each featured with several capabili
 | instruction_following_difficulty_filter | 🚀GPU 🟡Beta | Filter to keep texts based on their instruction following difficulty (IFD, https://arxiv.org/abs/2308.12032) score. 过滤以保持文本基于他们的指令跟随难度 (IFD， https://arxiv.org/abs/ 2308.12032) 分数。 | [info](operators/filter/instruction_following_difficulty_filter.md) | - |
 | language_id_score_filter | 🔤Text 💻CPU 🟢Stable | Filter to keep samples in a specific language with a confidence score above a threshold. 过滤器以保留置信度高于阈值的特定语言的样本。 | [info](operators/filter/language_id_score_filter.md) | - |
 | llm_analysis_filter | 🚀GPU 🌊vLLM 🧩HF 🔗API 🟡Beta | Base filter class for leveraging LLMs to analyze and filter data samples. 用于利用LLMs分析和过滤数据样本的基本筛选器类。 | [info](operators/filter/llm_analysis_filter.md) | - |
+| llm_condition_filter | 🔤Text 🚀GPU 🌊vLLM 🧩HF 🔗API 🔴Alpha | Filter by user-given natural language condition (LLM yes/no). 按用户给定的自然语言条件进行过滤 (LLM是/否)。 | - | - |
 | llm_difficulty_score_filter | 💻CPU 🟡Beta | Filter to keep samples with high difficulty scores estimated by an LLM. 过滤器以保留由LLM估计的高难度分数的样本。 | [info](operators/filter/llm_difficulty_score_filter.md) | - |
 | llm_perplexity_filter | 🚀GPU 🧩HF 🟡Beta | Filter to keep samples with perplexity scores within a specified range, computed using a specified LLM. 过滤器将困惑分数的样本保留在指定范围内，使用指定的LLM计算。 | [info](operators/filter/llm_perplexity_filter.md) | - |
 | llm_quality_score_filter | 💻CPU 🟡Beta | Filter to keep samples with a high quality score estimated by a language model. 过滤器，以保留具有语言模型估计的高质量分数的样本。 | [info](operators/filter/llm_quality_score_filter.md) | - |
@@ -226,6 +227,7 @@ All the specific operators are listed below, each featured with several capabili
 | imgdiff_difference_caption_generator_mapper | 🚀GPU 🟡Beta | Generates difference captions for bounding box regions in two images. 为两个图像中的边界框区域生成差异字幕。 | [info](operators/mapper/imgdiff_difference_caption_generator_mapper.md) | [ImgDiff](https://arxiv.org/abs/2408.04594) |
 | latex_figure_context_extractor_mapper | 🔮Multimodal 💻CPU 🟡Beta | A subfigure within a figure environment. 图环境中的子图。 | [info](operators/mapper/latex_figure_context_extractor_mapper.md) | - |
 | latex_merge_tex_mapper | 🔤Text 💻CPU 🟡Beta | Extracts and concatenates all ``.tex`` files from a compressed LaTeX project archive into a single text field. 将压缩的LaTeX项目存档中的所有 “.tex&#39;&#39; 文件提取并连接到单个文本字段中。 | [info](operators/mapper/latex_merge_tex_mapper.md) | - |
+| llm_extract_mapper | 🚀GPU 🌊vLLM 🧩HF 🔗API 🔴Alpha | Extract structured fields from text using an LLM; write results to meta. 使用LLM从文本中提取结构化字段; 将结果写入meta。 | - | - |
 | mllm_mapper | 🔮Multimodal 🚀GPU 🧩HF 🟢Stable | Mapper to use MLLMs for visual question answering tasks. Mapper使用MLLMs进行视觉问答任务。 | [info](operators/mapper/mllm_mapper.md) | - |
 | nlpaug_en_mapper | 🔤Text 💻CPU 🟢Stable | Augments English text samples using various methods from the nlpaug library. 使用nlpaug库中的各种方法增强英语文本样本。 | [info](operators/mapper/nlpaug_en_mapper.md) | - |
 | nlpcda_zh_mapper | 🔤Text 💻CPU 🟢Stable | Augments Chinese text samples using the nlpcda library. 使用nlpcda库扩充中文文本样本。 | [info](operators/mapper/nlpcda_zh_mapper.md) | - |

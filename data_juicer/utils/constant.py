@@ -138,6 +138,8 @@ class MetaKeys(object):
     role_relation = "role_relation"
     # # html tables
     html_tables = "html_tables"
+    # # LLM-based structured extraction (user-configurable output_schema)
+    llm_extract = "llm_extract"
 
 
 class StatsKeysMeta(type):
@@ -267,6 +269,8 @@ class StatsKeysConstant(object):
     llm_perplexity = "llm_perplexity"
     llm_task_relevance = "llm_task_relevance"
     llm_task_relevance_record = "llm_task_relevance_record"
+    # llm_condition_filter: True if sample satisfies the user-given condition
+    llm_condition_filter_result = "llm_condition_filter_result"
 
     #  === image ===
     aspect_ratios = "aspect_ratios"
