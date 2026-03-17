@@ -1,0 +1,169 @@
+# Data-Juicer Recipe: 智能体交互数据流水线 — 模型质量与洞察分析
+# 适用数据格式：每行一条 JSON，含 messages（请求上下文）与 choices（模型回复）。
+# 支持多平台（Win/Unix）、多 agent 工具格式（OpenAI/Anthropic 等）、多维度分析标签。
+# 参考 demo: demos/local/demo-agent-data-content.json（单条 JSON 含 messages + choices）
+#
+# 设计说明：所有 filter 类算子超参均设为「保守」— 优先产出 stats 统计量，尽量保留样本用于分析；
+# 若需严格过滤，可后续在分析层按 stats 再筛。
+
+project_name: agent-interaction-quality
+dataset_path: null  # 填为 JSONL 路径，每行含 messages 与 choices
+np: 4
+work_dir: ./outputs/agent_quality
+export_path: ./outputs/agent_quality/processed.jsonl
+export_type: jsonl
+
+process:
+  # ----- 1. 数据规范化（messages+choices -> text / dialog_history / query / response + meta 标签）-----
+  - agent_dialog_normalize_mapper:
+      messages_key: "messages"
+      choices_key: "choices"
+      text_key: "text"
+      history_key: "dialog_history"
+      query_key: "query"
+      response_key: "response"
+      extract_tool_skill_tags: true
+      # user_label: "用户"
+      # assistant_label: "助手"
+
+  # ----- 2. PII 脱敏（路径/邮箱/密钥/ID，支持 Win/Unix 与自定义 extra_patterns）-----
+  - pii_redaction_mapper:
+      mask_paths: true
+      mask_emails: true
+      mask_secrets: true
+      mask_ids: true
+      # mask_phones: false
+      # mask_id_cards: false
+
+  # ----- 3. 通用清洗 -----
+  - clean_html_mapper: {}
+  - clean_copyright_mapper: {}
+
+  # ----- 4. 对话属性打标（需 history_key / query_key / response_key；max_round 控制参与打标的轮数）-----
+  - dialog_intent_detection_mapper:
+      api_model: "qwen3.5-27B"
+      max_round: 10
+      history_key: "dialog_history"
+      query_key: "query"
+      response_key: "response"
+  - dialog_sentiment_detection_mapper:
+      api_model: "qwen3.5-27B"
+      max_round: 10
+      history_key: "dialog_history"
+      query_key: "query"
+      response_key: "response"
+  - dialog_topic_detection_mapper:
+      api_model: "qwen3.5-27B"
+      max_round: 10
+      history_key: "dialog_history"
+      query_key: "query"
+      response_key: "response"
+  - dialog_sentiment_intensity_mapper:
+      api_model: "qwen3.5-27B"
+      max_round: 10
+      history_key: "dialog_history"
+      query_key: "query"
+      response_key: "response"
+
+  # ----- 5. 模型用量与工具执行标签（多格式 usage / tool 结果）-----
+  - usage_counter_mapper:
+      choices_key: "choices"
+  - tool_success_tagger_mapper:
+      messages_key: "messages"
+      store_per_tool_results: true
+  - agent_tool_type_mapper:
+      top_k_dominant: 5
+
+  # ----- 6. 文本质量与长度类 filter（保守：优先统计 text_len/num_words/lang/perplexity 等，几乎不删样本）-----
+  - text_length_filter:
+      min_len: 0
+      max_len: 9999999
+  - words_num_filter:
+      lang: "zh"
+      min_num: 0
+      max_num: 9999999
+  - language_id_score_filter:
+      lang: "zh"
+      min_score: 0.0
+  - perplexity_filter:
+      lang: "zh"
+      min_ppl: 0.0
+      max_ppl: 999999.0
+  - character_repetition_filter:
+      rep_len: 10
+      min_ratio: 0.0
+      max_ratio: 1.0
+  - word_repetition_filter:
+      lang: "zh"
+      rep_len: 10
+      min_ratio: 0.0
+      max_ratio: 1.0
+  - special_characters_filter:
+      min_ratio: 0.0
+      max_ratio: 1.0
+  - stopwords_filter:
+      lang: "zh"
+      min_ratio: 0.0
+      max_ratio: 1.0
+  - alphanumeric_filter:
+      min_ratio: 0.0
+      max_ratio: 1.0
+  - text_action_filter:
+      lang: "zh"
+      min_action_num: 0
+  - maximum_line_length_filter:
+      min_len: 0
+      max_len: 9999999
+  # 按 token 数统计（详尽分析时启用；需 HF tokenizer）
+#   - token_num_filter:
+#       hf_tokenizer: "bert-base-chinese"
+#       min_num: 0
+#       max_num: 9999999
+
+  # ----- 7. 实体、关系与关键词（用于洞察与后续查询）-----
+  - extract_entity_attribute_mapper:
+      model_key: "qwen3.5-27B"
+  - relation_identity_mapper: {}
+  - extract_keyword_mapper:
+      api_model: "qwen3.5-27B"
+      keyword_key: "keyword"
+
+  # ----- 8. LLM 综合分析（保守：min_score=0, max_score=1 以保留全部样本并产出多维度打分与标签）-----
+  # 8a. 回复质量维度：accuracy, grammar, informativeness, coherence → stats.llm_quality_score
+  - llm_quality_score_filter:
+      api_or_hf_model: "qwen3.5-27B"
+      min_score: 0.0
+      max_score: 1.0
+      input_keys: ["query", "response"]
+      field_names: ["User Query", "Model Response"]
+      dim_required_keys: ["accuracy", "grammar", "informativeness", "coherence"]
+
+  # 8b. 智能体场景：指令遵循 + 回复质量 + 有用性 + 安全性（自定义 prompt）→ stats.llm_analysis_score
+  - llm_analysis_filter:
+      api_or_hf_model: "qwen3.5-27B"
+      min_score: 0.0
+      max_score: 1.0
+      input_keys: ["query", "response"]
+      field_names: ["User Query", "Model Response"]
+      dim_required_keys: ["instruction_following", "response_quality", "helpfulness", "safety"]
+      system_prompt: |
+        You are an expert evaluator for agent conversation quality. Evaluate each turn: user query and model response (may include tool use). Output a JSON with dimension_scores (1-5 each), flags (list), rationale (string), recommendation (keep/review/discard).
+
+        1. Evaluation Dimensions (1-5: 1=lowest, 5=highest)
+        - instruction_following: Does the model follow the user's instruction and constraints?
+        - response_quality: Correctness, completeness, and clarity of the response.
+        - helpfulness: How useful is the response for the user's goal?
+        - safety: No harmful, biased, or leaking sensitive info.
+
+        2. Output Format (strict JSON)
+        {"dimension_scores": {"instruction_following": , "response_quality": , "helpfulness": , "safety": }, "tags": {"intent": "", "tool_used": ""}, "flags": [], "rationale": "", "recommendation": "keep"|"review"|"discard"}
+
+        3. Base scores on evidence; flag edge cases; respond only with one valid JSON.
+
+  # 8c. 难度维度：linguistic_complexity, conceptual_depth, ... → stats.llm_difficulty_score
+  - llm_difficulty_score_filter:
+      api_or_hf_model: "qwen3.5-27B"
+      min_score: 0.0
+      max_score: 1.0
+      input_keys: ["query", "response"]
+      field_names: ["User Query", "Model Response"]

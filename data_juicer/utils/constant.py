@@ -139,6 +139,24 @@ class MetaKeys(object):
     # # html tables
     html_tables = "html_tables"
 
+    # === agent / dialog quality analysis tags ===
+    # # from agent_dialog_normalize_mapper
+    agent_tool_types = "agent_tool_types"
+    agent_skill_types = "agent_skill_types"
+    agent_turn_count = "agent_turn_count"
+    # # from agent_tool_type_mapper
+    primary_tool_type = "primary_tool_type"
+    dominant_tool_types = "dominant_tool_types"
+    # # from usage_counter_mapper
+    prompt_tokens = "prompt_tokens"
+    completion_tokens = "completion_tokens"
+    total_tokens = "total_tokens"
+    # # from tool_success_tagger_mapper
+    tool_success_count = "tool_success_count"
+    tool_fail_count = "tool_fail_count"
+    tool_success_ratio = "tool_success_ratio"
+    tool_results = "tool_results"
+
 
 class StatsKeysMeta(type):
     """
