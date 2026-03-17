@@ -1195,15 +1195,20 @@ def update_op_process(cfg, parser, used_ops=None):
             # Add new operator
             cfg.process.append({op_name: None if internal_op_para is None else namespace_to_dict(internal_op_para)})
 
-    # Optimize type checking
+    # Optimize type checking: deepcopy(parser) does not replicate nested add_class_arguments,
+    # so only pass global args to temp_parser to avoid "Unrecognized arguments" for op.* keys.
     recognized_args = {
         action.dest for action in parser._actions if hasattr(action, "dest") and isinstance(action, ActionTypeHint)
     }
+    exclude_prefixes = tuple(used_ops) + tuple(f"{op_name}." for op_name in (used_ops or ()))
 
-    # check the op params via type hint
     temp_parser = copy.deepcopy(parser)
-
-    temp_args = namespace_to_arg_list(temp_cfg, includes=recognized_args, excludes=["config"])
+    temp_args = namespace_to_arg_list(
+        temp_cfg,
+        includes=recognized_args,
+        excludes=["config"],
+        exclude_prefixes=exclude_prefixes,
+    )
 
     if temp_cfg.config:
         temp_args.extend(["--config", os.path.abspath(temp_cfg.config[0])])
@@ -1216,15 +1221,27 @@ def update_op_process(cfg, parser, used_ops=None):
     return cfg
 
 
-def namespace_to_arg_list(namespace, prefix="", includes=None, excludes=None):
+def namespace_to_arg_list(namespace, prefix="", includes=None, excludes=None, exclude_prefixes=None):
     arg_list = []
+    exclude_prefixes = exclude_prefixes or ()
 
     for key, value in vars(namespace).items():
+        concat_key = f"{prefix}{key}"
+        if exclude_prefixes and (
+            concat_key in exclude_prefixes
+            or any(concat_key.startswith(p + ".") for p in exclude_prefixes if "." not in p)
+        ):
+            continue
         if issubclass(type(value), Namespace):
-            nested_args = namespace_to_arg_list(value, f"{prefix}{key}.")
+            nested_args = namespace_to_arg_list(
+                value,
+                f"{prefix}{key}.",
+                includes=includes,
+                excludes=excludes,
+                exclude_prefixes=exclude_prefixes,
+            )
             arg_list.extend(nested_args)
         elif value is not None:
-            concat_key = f"{prefix}{key}"
             if includes is not None and concat_key not in includes:
                 continue
             if excludes is not None and concat_key in excludes:

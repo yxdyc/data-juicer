@@ -1,0 +1,22 @@
+# Minimal: normalize + extract_entity_attribute + relation_identity + extract_keyword（需 LLM）
+project_name: agent-minimal-07
+dataset_path: demos/local/demo-agent-data-content.jsonl
+np: 2
+export_path: ./outputs/agent_minimal/07_entity_keyword.jsonl
+text_keys: "id"
+
+process:
+  - agent_dialog_normalize_mapper:
+      messages_key: "messages"
+      choices_key: "response_choices"
+      text_key: "text"
+      history_key: "dialog_history"
+      query_key: "query"
+      response_key: "response"
+      extract_tool_skill_tags: true
+  - extract_entity_attribute_mapper:
+      model_key: "gemini-2.5-flash"
+  - relation_identity_mapper: {}
+  - extract_keyword_mapper:
+      api_model: "gemini-2.5-flash"
+      keyword_key: "keyword"

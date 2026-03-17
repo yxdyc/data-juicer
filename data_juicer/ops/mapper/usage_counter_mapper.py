@@ -13,12 +13,19 @@ OP_NAME = "usage_counter_mapper"
 
 
 def _get_usage_from_obj(obj: Any) -> dict:
-    """Extract prompt_tokens, completion_tokens, total_tokens from a dict."""
+    """Extract prompt_tokens, completion_tokens, total_tokens from a dict.
+    Supports: nested obj.usage / obj.usage_metadata, or obj as the usage dict.
+    """
     if not isinstance(obj, dict):
         return {}
     usage = obj.get("usage") or obj.get("usage_metadata") or {}
     if not isinstance(usage, dict):
-        return {}
+        usage = {}
+    # Top-level usage (e.g. response_usage with prompt_tokens directly)
+    if usage and (usage.get("prompt_tokens") is not None or usage.get("completion_tokens") is not None):
+        pass
+    elif obj.get("prompt_tokens") is not None or obj.get("completion_tokens") is not None:
+        usage = obj
     p = usage.get("prompt_tokens") or usage.get("input_tokens", 0)
     c = usage.get("completion_tokens") or usage.get("output_tokens", 0)
     return {"prompt_tokens": p, "completion_tokens": c, "total_tokens": usage.get("total_tokens")}
@@ -55,9 +62,9 @@ class UsageCounterMapper(Mapper):
     def process_single(self, sample):
         usages = []
 
-        # Top-level usage (e.g. OpenAI API response)
+        # Top-level usage (e.g. usage / response_usage)
         if self.usage_key in sample:
-            u = _get_usage_from_obj(sample)
+            u = _get_usage_from_obj(sample.get(self.usage_key)) or _get_usage_from_obj(sample)
             if u:
                 usages.append(u)
 

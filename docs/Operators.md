@@ -236,7 +236,7 @@ All the specific operators are listed below, each featured with several capabili
 | optimize_query_mapper | 🚀GPU 🟢Stable | Optimize queries in question-answer pairs to make them more specific and detailed. 优化问答对中的查询，使其更加具体和详细。 | [info](operators/mapper/optimize_query_mapper.md) | - |
 | optimize_response_mapper | 🚀GPU 🟢Stable | Optimize response in question-answer pairs to be more detailed and specific. 优化问答对中的响应，使其更加详细和具体。 | [info](operators/mapper/optimize_response_mapper.md) | - |
 | pair_preference_mapper | 🔤Text 💻CPU 🔗API 🟢Stable | Mapper to construct paired preference samples by generating a rejected response and its reason. Mapper通过生成拒绝响应及其原因来构造成对的偏好样本。 | [info](operators/mapper/pair_preference_mapper.md) | - |
-| pii_redaction_mapper | 🔤Text 💻CPU 🔴Alpha | Redact PII in text: paths (Unix/Windows), emails, secrets, IDs, phones. 在文本中编辑PII: 路径 (Unix/Windows)，电子邮件，秘密，IDs，电话。 | - | - |
+| pii_redaction_mapper | 💻CPU 🔴Alpha | Redact PII in text and optionally in messages/query/response. 在文本中以及可选地在消息/查询/响应中编辑PII。 | - | - |
 | punctuation_normalization_mapper | 🔤Text 💻CPU 🟢Stable | Normalizes unicode punctuations to their English equivalents in text samples. 将unicode标点规范化为文本示例中的英语等效项。 | [info](operators/mapper/punctuation_normalization_mapper.md) | - |
 | python_file_mapper | 💻CPU 🟢Stable | Executes a Python function defined in a file on input data. 对输入数据执行文件中定义的Python函数。 | [info](operators/mapper/python_file_mapper.md) | - |
 | python_lambda_mapper | 💻CPU 🟢Stable | Mapper for applying a Python lambda function to data samples. Mapper，用于将Python lambda函数应用于数据样本。 | [info](operators/mapper/python_lambda_mapper.md) | - |

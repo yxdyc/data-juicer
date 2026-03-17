@@ -1,11 +1,12 @@
 # Copyright 2025 The Data-Juicer Authors. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# PII redaction for agent/dialog text: paths (Win/Unix), emails, secrets, IDs.
-# Configurable and extensible for multi-platform and custom patterns.
+# PII redaction for agent/dialog text: paths (Win/Unix), emails, secrets, IDs,
+# agent channel identifiers (飞书/钉钉/企业微信/邮箱等). Configurable and
+# extensible for multi-platform and custom patterns.
 
 import re
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 from data_juicer.ops.base_op import OPERATORS, Mapper
 
@@ -17,6 +18,10 @@ PLACEHOLDER_SECRET = "[REDACTED]"
 PLACEHOLDER_ID = "[ID_REDACTED]"
 PLACEHOLDER_PHONE = "[PHONE_REDACTED]"
 PLACEHOLDER_ID_CARD = "[ID_CARD_REDACTED]"
+PLACEHOLDER_CHANNEL_ID = "[CHANNEL_ID_REDACTED]"
+
+# Keys that often hold paths/emails/PII; redact when found in any nested dict
+PII_VALUE_KEYS = ("file_path", "path", "file", "arguments", "file_paths")
 
 
 def _compile_patterns() -> dict:
@@ -29,33 +34,47 @@ def _compile_patterns() -> dict:
         # Windows: C:\, D:\, \\server\share
         "path_win": re.compile(r"(^|[\s\"'(\[=])([A-Za-z]:\\[^\s\"')\]]*(?:\\[^\s\"')\]]*)*)"),
         "path_win_unc": re.compile(r"(^|[\s\"'(\[=])(\\\\[^\s\"')\]]+)"),
-        "email": re.compile(r"[\w.+-]+@[\w.-]+\.\w+"),
+        # Email: local@domain.tld (gwm.cn, qq.com, etc.)
+        "email": re.compile(r"[a-zA-Z0-9][\w.+-]*@[\w.-]+\.(?:[a-zA-Z]{2,}|\w{2,})"),
         # Secret keys: key:= value or "key": "value"
         "secret_kv": re.compile(
             r"(\b(?:api[_-]?key|apikey|secret|password|passwd|token|auth|authorization"
             r"|credential|license[_-]?key)\s*[:=]\s*[\"']?)([^\s\"',}\]]+)",
             re.IGNORECASE,
         ),
-        # Session/user/request IDs
+        # Session/user/request IDs (session_id: 123, user_id: ou_xxx)
         "id_kv": re.compile(
-            r"\b(session[_-]?id|user[_-]?id|request[_-]?id|trace[_-]?id)\s*[:=]\s*[\"']?[\w.-]+",
+            r"\b(session[_-]?id|user[_-]?id|request[_-]?id|trace[_-]?id)\s*[:=]\s*[\"']?" r"[\w.-]+",
             re.IGNORECASE,
         ),
+        # Agent channel: 当前的channel: feishu / dingtalk / email / 飞书 / 钉钉
+        "channel_kv": re.compile(
+            r"(\bchannel\s*[:=]\s*[\"']?|当前的\s*channel\s*[:：]\s*)"
+            r"(feishu|dingtalk|wecom|wechat_work|email|mail|飞书|钉钉|企业微信|邮箱)\b",
+            re.IGNORECASE,
+        ),
+        # 飞书 open_id (ou_ + 32 hex)
+        "feishu_open_id": re.compile(r"\bou_[0-9a-f]{32}\b", re.IGNORECASE),
+        # 钉钉/企业微信 等常见 open_id 格式 (字母+数字+下划线，较长)
+        "platform_open_id": re.compile(r"\b(ou_|u_|uid_)[0-9a-zA-Z_-]{16,64}\b"),
         # Chinese mobile (simple)
         "phone_cn": re.compile(r"\b1[3-9]\d{9}\b"),
         # Generic phone (international, simple)
         "phone_intl": re.compile(r"\+\d{1,4}[-.\s]?\d{6,14}\b"),
         # Chinese ID card (18 digits)
-        "id_card_cn": re.compile(r"\b[1-9]\d{5}(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}[\dXx]\b"),
+        "id_card_cn": re.compile(
+            r"\b[1-9]\d{5}(?:19|20)\d{2}(?:0[1-9]|1[0-2])" r"(?:0[1-9]|[12]\d|3[01])\d{3}[\dXx]\b"
+        ),
     }
 
 
 @OPERATORS.register_module(OP_NAME)
 class PiiRedactionMapper(Mapper):
-    """Redact PII in text: paths (Unix/Windows), emails, secrets, IDs, phones.
+    """Redact PII in text and optionally in messages/query/response.
 
-    All options are configurable; supports custom extra patterns for
-    multi-platform and domain-specific PII.
+    Covers paths (Unix/Windows), emails, secrets, IDs, phones, agent channel
+    identifiers (飞书/钉钉/企业微信 open_id, channel: feishu|dingtalk|email).
+    Use redact_keys to apply to text, query, response, and/or messages (recursive).
     """
 
     def __init__(
@@ -66,14 +85,19 @@ class PiiRedactionMapper(Mapper):
         mask_ids: bool = True,
         mask_phones: bool = False,
         mask_id_cards: bool = False,
+        mask_channel_ids: bool = True,
+        mask_platform_open_ids: bool = True,
         path_replacement: str = PLACEHOLDER_PATH,
         email_replacement: str = PLACEHOLDER_EMAIL,
         secret_replacement: str = PLACEHOLDER_SECRET,
         id_replacement: str = PLACEHOLDER_ID,
         phone_replacement: str = PLACEHOLDER_PHONE,
         id_card_replacement: str = PLACEHOLDER_ID_CARD,
+        channel_id_replacement: str = PLACEHOLDER_CHANNEL_ID,
         extra_patterns: Optional[List[Tuple[str, str]]] = None,
         text_key: str = "text",
+        redact_keys: Optional[List[str]] = None,
+        messages_key: Optional[str] = "messages",
         **kwargs,
     ):
         super().__init__(text_key=text_key, **kwargs)
@@ -83,13 +107,27 @@ class PiiRedactionMapper(Mapper):
         self.mask_ids = mask_ids
         self.mask_phones = mask_phones
         self.mask_id_cards = mask_id_cards
+        self.mask_channel_ids = mask_channel_ids
+        self.mask_platform_open_ids = mask_platform_open_ids
         self.path_replacement = path_replacement
         self.email_replacement = email_replacement
         self.secret_replacement = secret_replacement
         self.id_replacement = id_replacement
         self.phone_replacement = phone_replacement
         self.id_card_replacement = id_card_replacement
+        self.channel_id_replacement = channel_id_replacement
         self.extra_patterns = extra_patterns or []
+        if redact_keys is not None:
+            self.redact_keys = redact_keys
+        else:
+            self.redact_keys = [
+                text_key,
+                "query",
+                "response",
+                "dialog_history",
+                "messages",
+            ]
+        self.messages_key = messages_key
 
         patterns = _compile_patterns()
         self._path_unix = patterns["path_unix"]
@@ -98,6 +136,9 @@ class PiiRedactionMapper(Mapper):
         self._email_re = patterns["email"]
         self._secret_kv = patterns["secret_kv"]
         self._id_kv = patterns["id_kv"]
+        self._channel_kv = patterns["channel_kv"]
+        self._feishu_open_id = patterns["feishu_open_id"]
+        self._platform_open_id = patterns["platform_open_id"]
         self._phone_cn = patterns["phone_cn"]
         self._phone_intl = patterns["phone_intl"]
         self._id_card_cn = patterns["id_card_cn"]
@@ -122,6 +163,11 @@ class PiiRedactionMapper(Mapper):
             text = self._secret_kv.sub(r"\1" + self.secret_replacement, text)
         if self.mask_ids:
             text = self._id_kv.sub(r"\1" + self.id_replacement, text)
+        if self.mask_channel_ids:
+            text = self._channel_kv.sub(r"\1" + self.channel_id_replacement, text)
+        if self.mask_platform_open_ids:
+            text = self._feishu_open_id.sub(self.channel_id_replacement, text)
+            text = self._platform_open_id.sub(self.channel_id_replacement, text)
         if self.mask_phones:
             text = self._phone_cn.sub(self.phone_replacement, text)
             text = self._phone_intl.sub(self.phone_replacement, text)
@@ -131,7 +177,92 @@ class PiiRedactionMapper(Mapper):
             text = pat.sub(repl, text)
         return text
 
-    def process_single(self, sample):
-        if self.text_key in sample and sample[self.text_key]:
-            sample[self.text_key] = self._redact_text(sample[self.text_key])
+    def _redact_value(self, val: Any) -> None:
+        """Recursively redact PII in dict/list; in-place. For str, use _redact_text."""
+        if isinstance(val, dict):
+            for k, v in list(val.items()):
+                if k in PII_VALUE_KEYS and isinstance(v, str):
+                    val[k] = self._redact_text(v)
+                else:
+                    self._redact_value(v)
+        elif isinstance(val, list):
+            for i, item in enumerate(val):
+                if isinstance(item, str):
+                    val[i] = self._redact_text(item)
+                else:
+                    self._redact_value(item)
+
+    def _redact_messages(self, messages: Any) -> None:
+        """In-place redact all string content inside messages (list of msg)."""
+        if not isinstance(messages, list):
+            return
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
+            content = msg.get("content")
+            if content is not None:
+                if isinstance(content, str):
+                    msg["content"] = self._redact_text(content)
+                elif isinstance(content, list):
+                    for i, block in enumerate(content):
+                        if isinstance(block, dict):
+                            for k in ("text", "content"):
+                                if k in block and isinstance(block[k], str):
+                                    block[k] = self._redact_text(block[k])
+                        elif isinstance(block, str):
+                            content[i] = self._redact_text(block)
+            # Redact tool_calls / tool_use (e.g. function.arguments with path/email)
+            for key in ("tool_calls", "tool_use"):
+                calls = msg.get(key)
+                if not isinstance(calls, list):
+                    continue
+                for call in calls:
+                    if not isinstance(call, dict):
+                        continue
+                    fn = call.get("function") or call.get("function_call")
+                    if isinstance(fn, dict):
+                        args = fn.get("arguments")
+                        if isinstance(args, str):
+                            fn["arguments"] = self._redact_text(args)
+                        elif isinstance(args, dict):
+                            self._redact_value(args)
+                    # Some formats put arguments at top level of call
+                    args = call.get("arguments")
+                    if isinstance(args, str):
+                        call["arguments"] = self._redact_text(args)
+                    elif isinstance(args, dict):
+                        self._redact_value(args)
+
+    def process_single(self, sample: dict) -> dict:
+        for key in self.redact_keys:
+            if key not in sample:
+                continue
+            val = sample[key]
+            if key == self.messages_key and isinstance(val, list):
+                self._redact_messages(val)
+                continue
+            if isinstance(val, str):
+                sample[key] = self._redact_text(val)
+            elif isinstance(val, list) and key == "dialog_history":
+                new_history = []
+                for pair in val:
+                    if isinstance(pair, (list, tuple)) and len(pair) >= 2:
+                        q, r = pair[0], pair[1]
+                        if isinstance(q, str):
+                            q = self._redact_text(q)
+                        if isinstance(r, str):
+                            r = self._redact_text(r)
+                        new_history.append((q, r))
+                    else:
+                        new_history.append(pair)
+                sample[key] = new_history
+            elif isinstance(val, (list, tuple)) and len(val) == 2:
+                q, r = val[0], val[1]
+                if isinstance(q, str):
+                    sample[key] = (self._redact_text(q), r)
+                    q, r = sample[key][0], sample[key][1]
+                if isinstance(r, str):
+                    sample[key] = (q, self._redact_text(r))
+        # Redact PII in nested file_path/path/arguments anywhere in sample
+        self._redact_value(sample)
         return sample

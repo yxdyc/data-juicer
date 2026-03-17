@@ -72,7 +72,7 @@ generic = [
     "vllm==0.11.0",  # LLM serving
     "uvloop==0.21.0",  # avoid async error before it's fixed in uvloop
     "onnxruntime",  # ONNX runtime
-    "cudf-cu12==25.4.0", # dataframe on GPU
+    "cudf-cu12==25.4.0; sys_platform == 'linux'",  # dataframe on GPU (Linux only)
 ]
 
 # Computer Vision

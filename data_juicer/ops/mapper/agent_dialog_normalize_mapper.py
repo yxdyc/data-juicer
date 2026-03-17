@@ -86,16 +86,21 @@ def _extract_tool_types(messages: List[dict]) -> List[str]:
     return out
 
 
-# Skill patterns: .../skill_name/SKILL.md, ## skill_name
+# Skill patterns: only structured identifiers to avoid fragment noise.
+# - Path: xxx/SKILL.md or xxx\SKILL.md -> capture segment (ASCII identifier)
+# - ## header: only English identifiers (## cron), not doc headings (## 记忆).
 _SKILL_PATTERNS = [
-    re.compile(r"[/\\](\w+)[/\\]SKILL\.md", re.IGNORECASE),
-    re.compile(r"##\s+(\w+)\s*\n"),
-    re.compile(r"Check\s+[\"'].*?(\w+)/SKILL\.md", re.IGNORECASE),  # noqa: E501
+    re.compile(r"[/\\]([a-zA-Z][a-zA-Z0-9_]*)[/\\]SKILL\.md", re.IGNORECASE),
+    re.compile(r"##\s+([a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z0-9_]+)?)\s*(?:\n|$)"),
+    re.compile(
+        r"Check\s+[\"'].*?([a-zA-Z][a-zA-Z0-9_]*)/SKILL\.md",
+        re.IGNORECASE,
+    ),
 ]
 
 
 def _extract_skill_types(messages: List[dict]) -> List[str]:
-    """Extract skill names from system/content (multi-pattern)."""
+    """Extract skill names (paths + ## English headers only)."""
     out = []
     seen = set()
     for m in messages:

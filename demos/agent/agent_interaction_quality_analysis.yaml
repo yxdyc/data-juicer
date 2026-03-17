@@ -1,23 +1,25 @@
 # Data-Juicer Recipe: 智能体交互数据流水线 — 模型质量与洞察分析
-# 适用数据格式：每行一条 JSON，含 messages（请求上下文）与 choices（模型回复）。
+# 适用数据格式：每行一条 JSON，含 messages（请求上下文）与 choices/response_choices（模型回复）。
 # 支持多平台（Win/Unix）、多 agent 工具格式（OpenAI/Anthropic 等）、多维度分析标签。
-# 参考 demo: demos/local/demo-agent-data-content.json（单条 JSON 含 messages + choices）
+# 参考 demo: demos/local/demo-agent-data-content.jsonl（每行含 messages + response_choices）
 #
 # 设计说明：所有 filter 类算子超参均设为「保守」— 优先产出 stats 统计量，尽量保留样本用于分析；
 # 若需严格过滤，可后续在分析层按 stats 再筛。
 
+# 顶层仅使用 config 支持的键（参考 demos/process_simple/process.yaml、config_all.yaml）
+# 原始 agent 数据无 text，formatter 用 text_keys 校验；第一个 op 会写出 text
 project_name: agent-interaction-quality
-dataset_path: null  # 填为 JSONL 路径，每行含 messages 与 choices
+dataset_path: demos/local/demo-agent-data-content.jsonl
 np: 4
-work_dir: ./outputs/agent_quality
 export_path: ./outputs/agent_quality/processed.jsonl
-export_type: jsonl
+text_keys: "id"  # 原始数据有 id 无 text；agent_dialog_normalize_mapper 会创建 text
 
 process:
   # ----- 1. 数据规范化（messages+choices -> text / dialog_history / query / response + meta 标签）-----
+  # 若数据源为 response_choices（如 demo-agent-data-content.jsonl），请设 choices_key: "response_choices"
   - agent_dialog_normalize_mapper:
       messages_key: "messages"
-      choices_key: "choices"
+      choices_key: "response_choices"  # 标准 OpenAI 为 "choices"；部分数据为 "response_choices"
       text_key: "text"
       history_key: "dialog_history"
       query_key: "query"
@@ -26,12 +28,16 @@ process:
       # user_label: "用户"
       # assistant_label: "助手"
 
-  # ----- 2. PII 脱敏（路径/邮箱/密钥/ID，支持 Win/Unix 与自定义 extra_patterns）-----
+  # ----- 2. PII 脱敏（路径/邮箱/密钥/ID/飞书·钉钉·企业微信 channel 与 open_id，支持多键与 messages 递归）-----
   - pii_redaction_mapper:
       mask_paths: true
       mask_emails: true
       mask_secrets: true
       mask_ids: true
+      mask_channel_ids: true   # channel: feishu|dingtalk|email|飞书|钉钉|企业微信|邮箱
+      mask_platform_open_ids: true  # 飞书 ou_xxx、钉钉/企业微信等 open_id
+      redact_keys: ["text", "query", "response", "dialog_history", "messages"]
+      messages_key: "messages"
       # mask_phones: false
       # mask_id_cards: false
 
@@ -66,8 +72,10 @@ process:
       response_key: "response"
 
   # ----- 5. 模型用量与工具执行标签（多格式 usage / tool 结果）-----
+  # 若数据源为 response_choices/response_usage（如 demo-agent-data-content.jsonl），与 normalize 的 choices_key 保持一致
   - usage_counter_mapper:
-      choices_key: "choices"
+      choices_key: "response_choices"
+      usage_key: "response_usage"  # 部分数据为 response_usage；标准 OpenAI 为 "usage"
   - tool_success_tagger_mapper:
       messages_key: "messages"
       store_per_tool_results: true
