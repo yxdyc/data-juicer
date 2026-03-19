@@ -258,11 +258,11 @@ class PiiRedactionMapper(Mapper):
                 sample[key] = new_history
             elif isinstance(val, (list, tuple)) and len(val) == 2:
                 q, r = val[0], val[1]
-                if isinstance(q, str):
-                    sample[key] = (self._redact_text(q), r)
-                    q, r = sample[key][0], sample[key][1]
-                if isinstance(r, str):
-                    sample[key] = (q, self._redact_text(r))
+                redacted_q = self._redact_text(q) if isinstance(q, str) else q
+                redacted_r = self._redact_text(r) if isinstance(r, str) else r
+                if redacted_q is not q or redacted_r is not r:
+                    # Preserve list vs. tuple (old code always wrote a tuple).
+                    sample[key] = type(val)((redacted_q, redacted_r))
         # Redact PII in nested file_path/path/arguments anywhere in sample
         self._redact_value(sample)
         return sample

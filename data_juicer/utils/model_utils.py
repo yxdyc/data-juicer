@@ -1389,9 +1389,7 @@ def update_sampling_params(
     }
 
     if fetch_generation_config_from_hf is None:
-        fetch_generation_config_from_hf = enable_vllm or (
-            "/" in str(pretrained_model_name_or_path)
-        )
+        fetch_generation_config_from_hf = enable_vllm or ("/" in str(pretrained_model_name_or_path))
 
     model_generation_config = {}
     if fetch_generation_config_from_hf:
@@ -1399,13 +1397,10 @@ def update_sampling_params(
 
         pretrained_model_name_or_path = check_model_home(pretrained_model_name_or_path)
         try:
-            model_generation_config = GenerationConfig.from_pretrained(
-                pretrained_model_name_or_path
-            ).to_dict()
-        except Exception:  # noqa: S110
+            model_generation_config = GenerationConfig.from_pretrained(pretrained_model_name_or_path).to_dict()
+        except Exception as e:
             logger.warning(
-                f"No generation config found for the model "
-                f"[{pretrained_model_name_or_path}]"
+                f"No generation config found for the model " f"[{pretrained_model_name_or_path}]. Error: {e}"
             )
 
     for key in update_keys:
