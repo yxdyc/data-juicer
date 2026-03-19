@@ -140,6 +140,8 @@ class MetaKeys(object):
     html_tables = "html_tables"
     # # LLM-based structured extraction (user-configurable output_schema)
     llm_extract = "llm_extract"
+    # # LLM semantic ops: token/cost usage per call (prompt_tokens, completion_tokens, total_tokens, cost_estimate)
+    llm_semantic_usage = "llm_semantic_usage"
 
 
 class StatsKeysMeta(type):
@@ -271,6 +273,8 @@ class StatsKeysConstant(object):
     llm_task_relevance_record = "llm_task_relevance_record"
     # llm_condition_filter: True if sample satisfies the user-given condition
     llm_condition_filter_result = "llm_condition_filter_result"
+    # llm_* semantic ops: token/cost usage (dict with prompt_tokens, completion_tokens, total_tokens, cost_estimate)
+    llm_semantic_usage = "llm_semantic_usage"
 
     #  === image ===
     aspect_ratios = "aspect_ratios"

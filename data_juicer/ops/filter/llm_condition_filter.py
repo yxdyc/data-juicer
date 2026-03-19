@@ -12,7 +12,7 @@ from pydantic import PositiveInt
 from data_juicer.ops.base_op import OPERATORS, Filter
 from data_juicer.utils.constant import Fields, StatsKeys
 from data_juicer.utils.lazy_loader import LazyLoader
-from data_juicer.utils.llm_structured_ops import condition_filter_one
+from data_juicer.utils.llm_semantic_ops import condition_filter_one
 from data_juicer.utils.model_utils import (
     get_model,
     prepare_model,
@@ -129,9 +129,10 @@ class LLMConditionFilter(Filter):
             model = get_model(self.model_key, rank, self.use_cuda())
 
         result = False
+        usage = None
         for _ in range(self.try_num):
             try:
-                result = condition_filter_one(
+                result, usage = condition_filter_one(
                     text,
                     self.condition,
                     model,
@@ -144,6 +145,8 @@ class LLMConditionFilter(Filter):
             except Exception as e:
                 logger.warning("LLMConditionFilter attempt failed: %s", e)
         sample[Fields.stats][StatsKeys.llm_condition_filter_result] = result
+        if usage is not None:
+            sample[Fields.stats][StatsKeys.llm_semantic_usage] = usage.to_dict()
         return sample
 
     def process_single(self, sample: dict, rank: Optional[int] = None) -> bool:

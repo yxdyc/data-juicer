@@ -12,7 +12,7 @@ from pydantic import PositiveInt
 from data_juicer.ops.base_op import OPERATORS, TAGGING_OPS, Mapper
 from data_juicer.utils.constant import Fields, MetaKeys
 from data_juicer.utils.lazy_loader import LazyLoader
-from data_juicer.utils.llm_structured_ops import extract_one
+from data_juicer.utils.llm_semantic_ops import extract_one
 from data_juicer.utils.model_utils import (
     get_model,
     prepare_model,
@@ -139,9 +139,10 @@ class LLMExtractMapper(Mapper):
             model = get_model(self.model_key, rank, self.use_cuda())
 
         extracted = None
+        usage = None
         for _ in range(self.try_num):
             try:
-                extracted = extract_one(
+                extracted, usage = extract_one(
                     input_text,
                     self.output_schema,
                     model,
@@ -157,10 +158,13 @@ class LLMExtractMapper(Mapper):
                 logger.warning("LLMExtractMapper attempt failed: %s", e)
         if extracted is None:
             extracted = {k: None for k in self.output_schema}
+            usage = None
 
         if self.meta_output_key:
             sample[Fields.meta][self.meta_output_key] = extracted
         else:
             for k, v in extracted.items():
                 sample[Fields.meta][k] = v
+        if usage is not None:
+            sample[Fields.meta][MetaKeys.llm_semantic_usage] = usage.to_dict()
         return sample
