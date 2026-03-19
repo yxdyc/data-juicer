@@ -143,6 +143,7 @@ class MetaKeys(object):
     # # from agent_dialog_normalize_mapper
     agent_tool_types = "agent_tool_types"
     agent_skill_types = "agent_skill_types"
+    agent_skill_insights = "agent_skill_insights"
     agent_turn_count = "agent_turn_count"
     # # from agent_tool_type_mapper
     primary_tool_type = "primary_tool_type"

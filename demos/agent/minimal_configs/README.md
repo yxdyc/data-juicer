@@ -38,12 +38,18 @@ dj-process --config demos/agent/minimal_configs/05_filters.yaml
 # 06 单个 dialog mapper（需 LLM）
 dj-process --config demos/agent/minimal_configs/06_one_dialog_mapper.yaml
 
-# 07 实体/关系/关键词（需 LLM）
+# 07 实体/关系/关键词（需 LLM；已配 query_entities/query_attributes、source_entity/target_entity 以产出实体与关系）
 dj-process --config demos/agent/minimal_configs/07_entity_keyword.yaml
 
 # 08 单个 LLM filter
 dj-process --config demos/agent/minimal_configs/08_one_llm_filter.yaml
 ```
+
+## 配置说明摘要
+
+- **06**：dialog_intent/topic/sentiment 等 mapper 会对多轮标签做**去重**（保持顺序），避免重复意图标签。
+- **07**：extract_entity_attribute 需配置 `query_entities`、`query_attributes`；relation_identity 需配置 `source_entity`、`target_entity`，否则实体/关系多为空。当前 07 已配「用户/助手/任务」与「目标/行为」、「用户→助手」关系。
+- **agent_skill_insights**：完整 recipe 中在 agent_tool_type_mapper 后增加 `agent_skill_insight_mapper`，用 LLM 将 agent_tool_types + agent_skill_types 归纳为 3～5 个高层能力标签（如 文件与编辑、搜索与记忆），写入 `meta.agent_skill_insights`，比仅用正则的 skill_types 更有洞察。
 
 ## 建议调试顺序
 

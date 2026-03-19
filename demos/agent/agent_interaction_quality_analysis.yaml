@@ -47,25 +47,25 @@ process:
 
   # ----- 4. 对话属性打标（需 history_key / query_key / response_key；max_round 控制参与打标的轮数）-----
   - dialog_intent_detection_mapper:
-      api_model: "qwen3.5-27B"
+      api_model: "qwen-turbo"
       max_round: 10
       history_key: "dialog_history"
       query_key: "query"
       response_key: "response"
   - dialog_sentiment_detection_mapper:
-      api_model: "qwen3.5-27B"
+      api_model: "qwen-turbo"
       max_round: 10
       history_key: "dialog_history"
       query_key: "query"
       response_key: "response"
   - dialog_topic_detection_mapper:
-      api_model: "qwen3.5-27B"
+      api_model: "qwen-turbo"
       max_round: 10
       history_key: "dialog_history"
       query_key: "query"
       response_key: "response"
   - dialog_sentiment_intensity_mapper:
-      api_model: "qwen3.5-27B"
+      api_model: "qwen-turbo"
       max_round: 10
       history_key: "dialog_history"
       query_key: "query"
@@ -81,6 +81,9 @@ process:
       store_per_tool_results: true
   - agent_tool_type_mapper:
       top_k_dominant: 5
+  # LLM 归纳工具/技能为高层能力标签（如 文件与编辑、搜索与记忆），写入 meta.agent_skill_insights
+  - agent_skill_insight_mapper:
+      api_model: "qwen3.5-27B"
 
   # ----- 6. 文本质量与长度类 filter（保守：优先统计 text_len/num_words/lang/perplexity 等，几乎不删样本）-----
   - text_length_filter:
@@ -130,16 +133,16 @@ process:
 
   # ----- 7. 实体、关系与关键词（用于洞察与后续查询）-----
   - extract_entity_attribute_mapper:
-      model_key: "qwen3.5-27B"
+      model_key: "qwen-turbo"
   - relation_identity_mapper: {}
   - extract_keyword_mapper:
-      api_model: "qwen3.5-27B"
+      api_model: "qwen-turbo"
       keyword_key: "keyword"
 
   # ----- 8. LLM 综合分析（保守：min_score=0, max_score=1 以保留全部样本并产出多维度打分与标签）-----
   # 8a. 回复质量维度：accuracy, grammar, informativeness, coherence → stats.llm_quality_score
   - llm_quality_score_filter:
-      api_or_hf_model: "qwen3.5-27B"
+      api_or_hf_model: "qwen-turbo"
       min_score: 0.0
       max_score: 1.0
       input_keys: ["query", "response"]
@@ -148,7 +151,7 @@ process:
 
   # 8b. 智能体场景：指令遵循 + 回复质量 + 有用性 + 安全性（自定义 prompt）→ stats.llm_analysis_score
   - llm_analysis_filter:
-      api_or_hf_model: "qwen3.5-27B"
+      api_or_hf_model: "qwen-turbo"
       min_score: 0.0
       max_score: 1.0
       input_keys: ["query", "response"]
@@ -170,7 +173,7 @@ process:
 
   # 8c. 难度维度：linguistic_complexity, conceptual_depth, ... → stats.llm_difficulty_score
   - llm_difficulty_score_filter:
-      api_or_hf_model: "qwen3.5-27B"
+      api_or_hf_model: "qwen-turbo"
       min_score: 0.0
       max_score: 1.0
       input_keys: ["query", "response"]

@@ -220,7 +220,8 @@ class DialogIntentDetectionMapper(Mapper):
             history.append(self.labels_template.format(labels=labels))
             history.append(self.response_template.format(response=qa[1]))
 
-        meta[self.labels_key] = labels_list
+        # Deduplicate labels while preserving order (per user feedback)
+        meta[self.labels_key] = list(dict.fromkeys(labels_list))
         meta[self.analysis_key] = analysis_list
 
         return sample

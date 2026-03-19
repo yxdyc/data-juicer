@@ -1,4 +1,5 @@
 from .agent_dialog_normalize_mapper import AgentDialogNormalizeMapper
+from .agent_skill_insight_mapper import AgentSkillInsightMapper
 from .agent_tool_type_mapper import AgentToolTypeMapper
 from .annotation.human_preference_annotation_mapper import (
     HumanPreferenceAnnotationMapper,
@@ -122,6 +123,7 @@ from .whitespace_normalization_mapper import WhitespaceNormalizationMapper
 
 __all__ = [
     "AgentDialogNormalizeMapper",
+    "AgentSkillInsightMapper",
     "AgentToolTypeMapper",
     "AudioAddGaussianNoiseMapper",
     "AudioFFmpegWrappedMapper",

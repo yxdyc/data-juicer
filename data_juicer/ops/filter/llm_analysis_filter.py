@@ -216,16 +216,23 @@ json
 
     def parse_output(self, raw_output):
         def extract_outer_braces(s):
+            if s is None or (isinstance(s, str) and not s.strip()):
+                return None
             pattern = r"(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})"
             match = re.search(pattern, s)
-
             if match:
                 return match.group(1)
-            else:
-                return None
+            return None
 
+        if raw_output is None or (isinstance(raw_output, str) and not (raw_output or "").strip()):
+            return 0, None, None
         json_str = extract_outer_braces(raw_output)
-        data = json.loads(json_str)
+        if json_str is None:
+            return 0, None, None
+        try:
+            data = json.loads(json_str)
+        except (json.JSONDecodeError, TypeError):
+            return 0, None, None
         if "flags" in data:
             data["flags"] = np.array(data["flags"], dtype=np.str_)
         tags = data.get("tags", None)
@@ -270,6 +277,8 @@ json
                     output = response[0]["generated_text"]
                 else:
                     output = model(messages, **self.sampling_params)
+                if output is None or (isinstance(output, str) and not (output or "").strip()):
+                    continue
                 score, record, tags = self.parse_output(output)
                 if record is not None:
                     break

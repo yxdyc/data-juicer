@@ -15,8 +15,13 @@ process:
       response_key: "response"
       extract_tool_skill_tags: true
   - extract_entity_attribute_mapper:
-      model_key: "gemini-2.5-flash"
-  - relation_identity_mapper: {}
+      api_model: "qwen-turbo"
+      query_entities: ["用户", "助手", "任务"]
+      query_attributes: ["目标", "行为"]
+  - relation_identity_mapper:
+      api_model: "qwen-turbo"
+      source_entity: "用户"
+      target_entity: "助手"
   - extract_keyword_mapper:
-      api_model: "gemini-2.5-flash"
+      api_model: "qwen-turbo"
       keyword_key: "keyword"

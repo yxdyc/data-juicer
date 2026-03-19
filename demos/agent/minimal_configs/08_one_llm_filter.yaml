@@ -15,7 +15,7 @@ process:
       response_key: "response"
       extract_tool_skill_tags: true
   - llm_quality_score_filter:
-      api_or_hf_model: "gemini-2.5-flash"
+      api_or_hf_model: "qwen-turbo"
       min_score: 0.0
       max_score: 1.0
       input_keys: ["query", "response"]

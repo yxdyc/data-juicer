@@ -206,6 +206,8 @@ class ChatAPIModel:
         self.response_path = response_path or "choices.0.message.content"
 
         client_args = filter_arguments(openai.OpenAI, kwargs)
+        if "base_url" not in client_args and os.environ.get("OPENAI_BASE_URL"):
+            client_args["base_url"] = os.environ.get("OPENAI_BASE_URL").rstrip("/")
         self._client = openai.OpenAI(**client_args)
         if self.model is None:
             logger.warning("No model specified. Using the first available model from the server.")
@@ -262,6 +264,8 @@ class EmbeddingAPIModel:
         self.response_path = response_path or "data.0.embedding"
 
         client_args = filter_arguments(openai.OpenAI, kwargs)
+        if "base_url" not in client_args and os.environ.get("OPENAI_BASE_URL"):
+            client_args["base_url"] = os.environ.get("OPENAI_BASE_URL").rstrip("/")
         self._client = openai.OpenAI(**client_args)
         if self.model is None:
             logger.warning("No model specified. Using the first available model from the server.")
@@ -309,6 +313,8 @@ class ResponsesAPIModel:
         self.response_path = response_path or "output.0.content.0.text"
 
         client_args = filter_arguments(openai.OpenAI, kwargs)
+        if "base_url" not in client_args and os.environ.get("OPENAI_BASE_URL"):
+            client_args["base_url"] = os.environ.get("OPENAI_BASE_URL").rstrip("/")
         self._client = openai.OpenAI(**client_args)
         if self.model is None:
             logger.warning("No model specified. Using the first available model from the server.")
@@ -1356,7 +1362,19 @@ def prepare_embedding_model(model_path, **model_params):
     return type("EmbeddingModel", (), {"encode": encode})()
 
 
-def update_sampling_params(sampling_params, pretrained_model_name_or_path, enable_vllm=False):
+def update_sampling_params(
+    sampling_params,
+    pretrained_model_name_or_path,
+    enable_vllm=False,
+    fetch_generation_config_from_hf=None,
+):
+    """Update sampling_params with max_tokens/max_new_tokens from model or defaults.
+
+    When fetch_generation_config_from_hf is False (e.g. API-only models like
+    gemini-2.5-flash via DashScope), skip HuggingFace GenerationConfig fetch to
+    avoid connection errors. Default None means: fetch when enable_vllm or when
+    pretrained_model_name_or_path looks like an HF path (contains /).
+    """
     if enable_vllm:
         update_keys = {"max_tokens"}
     else:
@@ -1370,15 +1388,20 @@ def update_sampling_params(sampling_params, pretrained_model_name_or_path, enabl
         "max_new_tokens": (max, 512),
     }
 
-    # try to get the generation configs
-    from transformers import GenerationConfig
+    if fetch_generation_config_from_hf is None:
+        fetch_generation_config_from_hf = enable_vllm or ("/" in str(pretrained_model_name_or_path))
 
-    pretrained_model_name_or_path = check_model_home(pretrained_model_name_or_path)
-    try:
-        model_generation_config = GenerationConfig.from_pretrained(pretrained_model_name_or_path).to_dict()
-    except:  # noqa: E722
-        logger.warning(f"No generation config found for the model " f"[{pretrained_model_name_or_path}]")
-        model_generation_config = {}
+    model_generation_config = {}
+    if fetch_generation_config_from_hf:
+        from transformers import GenerationConfig
+
+        pretrained_model_name_or_path = check_model_home(pretrained_model_name_or_path)
+        try:
+            model_generation_config = GenerationConfig.from_pretrained(pretrained_model_name_or_path).to_dict()
+        except Exception as e:
+            logger.warning(
+                f"No generation config found for the model " f"[{pretrained_model_name_or_path}]. Error: {e}"
+            )
 
     for key in update_keys:
         # if there is this param in the sampling_prams, compare it with the

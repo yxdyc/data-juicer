@@ -15,7 +15,7 @@ process:
       response_key: "response"
       extract_tool_skill_tags: true
   - dialog_intent_detection_mapper:
-      api_model: "gemini-2.5-flash"
+      api_model: "qwen-turbo"
       max_round: 5
       history_key: "dialog_history"
       query_key: "query"
