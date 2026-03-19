@@ -28,6 +28,55 @@ Tags 标签: gpu, vllm, hf, api
 | `model_params` | dict | `{}` | Parameters for model init. |
 | `sampling_params` | dict | `{}` | Sampling params (e.g. temperature, top_p). |
 
+## 📊 Effect demonstration 效果演示
+
+The examples below match the [unit tests](../../../tests/ops/mapper/test_llm_extract_mapper.py). **Concrete field values depend on the model and API**; only shape and keys are guaranteed.  
+下列示例与单元测试场景一致；**具体抽取内容随模型与接口变化**，文档中仅示意典型结果。
+
+### test_extract_default
+```python
+LLMExtractMapper(
+    input_keys=["text"],
+    output_schema={
+        "topic": "One short phrase: main topic.",
+        "sentiment": "One word: positive, negative, or neutral.",
+    },
+    api_or_hf_model="gpt-4o",
+    meta_output_key="llm_extract",
+    try_num=2,
+)
+```
+
+#### 📥 input data 输入数据
+<div class="sample-card" style="border:1px solid #ddd; padding:12px; margin:8px 0; border-radius:6px; background:#fafafa; box-shadow:0 1px 3px rgba(0,0,0,0.1);"><div class="sample-header" style="background:#f8f9fa; padding:4px 8px; margin-bottom:6px; border-radius:3px; font-size:0.9em; color:#666; border-left:3px solid #007acc;"><strong>Sample 1:</strong> text</div><pre style="padding:6px; background:#f6f8fa; border-radius:4px; overflow-x:auto; white-space:pre; word-wrap:normal;">The stock market rose today. Investors are optimistic.</pre></div><div class="sample-card" style="border:1px solid #ddd; padding:12px; margin:8px 0; border-radius:6px; background:#fafafa; box-shadow:0 1px 3px rgba(0,0,0,0.1);"><div class="sample-header" style="background:#f8f9fa; padding:4px 8px; margin-bottom:6px; border-radius:3px; font-size:0.9em; color:#666; border-left:3px solid #007acc;"><strong>Sample 2:</strong> text</div><pre style="padding:6px; background:#f6f8fa; border-radius:4px; overflow-x:auto; white-space:pre; word-wrap:normal;">Bad weather caused delays. Many people were upset.</pre></div>
+
+#### 📤 output data 输出数据
+<div class="sample-card" style="border:1px solid #ddd; padding:12px; margin:8px 0; border-radius:6px; background:#fafafa; box-shadow:0 1px 3px rgba(0,0,0,0.1);"><div class="sample-header" style="background:#f8f9fa; padding:4px 8px; margin-bottom:6px; border-radius:3px; font-size:0.9em; color:#666; border-left:3px solid #007acc;"><strong>Sample 1:</strong> text</div><pre style="padding:6px; background:#f6f8fa; border-radius:4px; overflow-x:auto; white-space:pre; word-wrap:normal;">The stock market rose today. Investors are optimistic.</pre><div class='meta' style='margin:6px 0;'><table class='meta-table' style='border-collapse:collapse; width:100%; border:1px solid #e3e3e3;'><tr><th colspan='2' style='text-align:left; vertical-align:top; padding:6px 8px; font-weight:600; border-bottom:1px solid #e3e3e3;'>meta</th></tr><tr><td style='text-align:left; vertical-align:top; padding:4px 8px; padding-left:22px; font-weight:500; color:#444; border-bottom:1px solid #e3e3e3; white-space:nowrap;'>llm_extract</td><td style='text-align:left; vertical-align:top; padding:4px 6px; padding-left:4px; border-bottom:1px solid #e3e3e3;'><pre style="margin:0; white-space:pre-wrap;">{"topic": "stock market / finance", "sentiment": "positive"}</pre></td></tr><tr><td style='text-align:left; vertical-align:top; padding:4px 8px; padding-left:22px; font-weight:500; color:#444; border-bottom:1px solid #e3e3e3; white-space:nowrap;'>llm_semantic_usage</td><td style='text-align:left; vertical-align:top; padding:4px 6px; padding-left:4px; border-bottom:1px solid #e3e3e3;'><pre style="margin:0; white-space:pre-wrap;">{"prompt_tokens": …, "completion_tokens": …, "total_tokens": …}</pre></td></tr></table></div></div><div class="sample-card" style="border:1px solid #ddd; padding:12px; margin:8px 0; border-radius:6px; background:#fafafa; box-shadow:0 1px 3px rgba(0,0,0,0.1);"><div class="sample-header" style="background:#f8f9fa; padding:4px 8px; margin-bottom:6px; border-radius:3px; font-size:0.9em; color:#666; border-left:3px solid #007acc;"><strong>Sample 2:</strong> text</div><pre style="padding:6px; background:#f6f8fa; border-radius:4px; overflow-x:auto; white-space:pre; word-wrap:normal;">Bad weather caused delays. Many people were upset.</pre><div class='meta' style='margin:6px 0;'><table class='meta-table' style='border-collapse:collapse; width:100%; border:1px solid #e3e3e3;'><tr><th colspan='2' style='text-align:left; vertical-align:top; padding:6px 8px; font-weight:600; border-bottom:1px solid #e3e3e3;'>meta</th></tr><tr><td style='text-align:left; vertical-align:top; padding:4px 8px; padding-left:22px; font-weight:500; color:#444; border-bottom:1px solid #e3e3e3; white-space:nowrap;'>llm_extract</td><td style='text-align:left; vertical-align:top; padding:4px 6px; padding-left:4px; border-bottom:1px solid #e3e3e3;'><pre style="margin:0; white-space:pre-wrap;">{"topic": "weather / travel disruption", "sentiment": "negative"}</pre></td></tr><tr><td style='text-align:left; vertical-align:top; padding:4px 8px; padding-left:22px; font-weight:500; color:#444; border-bottom:1px solid #e3e3e3; white-space:nowrap;'>llm_semantic_usage</td><td style='text-align:left; vertical-align:top; padding:4px 6px; padding-left:4px; border-bottom:1px solid #e3e3e3;'><pre style="margin:0; white-space:pre-wrap;">{"prompt_tokens": …, "completion_tokens": …, "total_tokens": …}</pre></td></tr></table></div></div>
+
+#### ✨ explanation 解释
+`dataset.map(op.process, batch_size=1)` fills `meta["llm_extract"]` with keys from `output_schema`. When the API returns usage, `meta["llm_semantic_usage"]` holds token counts (and optional cost).  
+对每条样本调用 `map` 后，`meta` 中写入抽取结果；若接口返回用量，则同时写入 `llm_semantic_usage`。
+
+### test_extract_empty_input
+```python
+LLMExtractMapper(
+    input_keys=["text"],
+    output_schema={"topic": "Main topic.", "sentiment": "Sentiment."},
+    api_or_hf_model="gpt-4o",
+    meta_output_key="llm_extract",
+)
+```
+
+#### 📥 input data 输入数据
+<div class="sample-card" style="border:1px solid #ddd; padding:12px; margin:8px 0; border-radius:6px; background:#fafafa; box-shadow:0 1px 3px rgba(0,0,0,0.1);"><div class="sample-header" style="background:#f8f9fa; padding:4px 8px; margin-bottom:6px; border-radius:3px; font-size:0.9em; color:#666; border-left:3px solid #007acc;"><strong>Sample 1:</strong> text</div><pre style="padding:6px; background:#f6f8fa; border-radius:4px; overflow-x:auto; white-space:pre; word-wrap:normal;"></pre></div>
+
+#### 📤 output data 输出数据
+<div class="sample-card" style="border:1px solid #ddd; padding:12px; margin:8px 0; border-radius:6px; background:#fafafa; box-shadow:0 1px 3px rgba(0,0,0,0.1);"><div class="sample-header" style="background:#f8f9fa; padding:4px 8px; margin-bottom:6px; border-radius:3px; font-size:0.9em; color:#666; border-left:3px solid #007acc;"><strong>Sample 1:</strong> text</div><pre style="padding:6px; background:#f6f8fa; border-radius:4px; overflow-x:auto; white-space:pre; word-wrap:normal;"></pre><div class='meta' style='margin:6px 0;'><table class='meta-table' style='border-collapse:collapse; width:100%; border:1px solid #e3e3e3;'><tr><th colspan='2' style='text-align:left; vertical-align:top; padding:6px 8px; font-weight:600; border-bottom:1px solid #e3e3e3;'>meta</th></tr><tr><td style='text-align:left; vertical-align:top; padding:4px 8px; padding-left:22px; font-weight:500; color:#444; border-bottom:1px solid #e3e3e3; white-space:nowrap;'>llm_extract</td><td style='text-align:left; vertical-align:top; padding:4px 6px; padding-left:4px; border-bottom:1px solid #e3e3e3;'><pre style="margin:0; white-space:pre-wrap;">{"topic": null, "sentiment": null}</pre></td></tr></table></div></div>
+
+#### ✨ explanation 解释
+Empty concatenated input skips the LLM call and sets all schema fields to `null` as in the unit test.  
+空输入时不调用模型，各字段为 `null`，与单测一致。
+
 ## 🌐 DashScope / OpenAI-compatible 环境变量
 
 使用阿里云 DashScope **OpenAI 兼容模式**（REST）时，可只配环境变量，无需在 recipe 里写 key：
