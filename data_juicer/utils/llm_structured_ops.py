@@ -6,9 +6,18 @@ by adapting input to (text, schema/condition). Aligns with existing llm_* naming
 
 import json
 import logging
+from enum import Enum
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
+
+
+class InferenceStrategy(Enum):
+    DIRECT = "direct"  # Fast, no reasoning
+    COT = "cot"  # Chain-of-Thought reasoning
+    FEW_SHOT = "few_shot"  # Direct with examples
+    COT_SHOT = "cot_shot"  # Reasoning with examples
+
 
 # ---- Default prompts for user-configurable schema/condition ----
 
@@ -26,24 +35,92 @@ DEFAULT_EXTRACT_USER_TEMPLATE = (
     "# Output\nReturn a single JSON object with the above keys. No explanation."
 )
 
+DEFAULT_EXTRACT_COT_TEMPLATE = (
+    "# Input\n{input_text}\n\n"
+    "# Instructions (output keys and what to extract)\n"
+    "{output_instructions}\n\n"
+    "# Output\nFirst, think step by step about how to extract each field. "
+    "Then return a single JSON object with the above keys."
+)
+
+DEFAULT_EXTRACT_FEW_SHOT_TEMPLATE = (
+    "# Examples\n{examples}\n\n"
+    "# Input\n{input_text}\n\n"
+    "# Instructions (output keys and what to extract)\n"
+    "{output_instructions}\n\n"
+    "# Output\nReturn a single JSON object with the above keys. No explanation."
+)
+
+DEFAULT_EXTRACT_COT_SHOT_TEMPLATE = (
+    "# Examples\n{examples}\n\n"
+    "# Input\n{input_text}\n\n"
+    "# Instructions (output keys and what to extract)\n"
+    "{output_instructions}\n\n"
+    "# Output\nFirst, think step by step about how to extract each field based on the examples. "
+    "Then return a single JSON object with the above keys."
+)
+
 DEFAULT_CONDITION_SYSTEM = "You are a binary classifier. Answer only 'yes' or 'no', nothing else."
 
 DEFAULT_CONDITION_USER_TEMPLATE = (
     "# Text\n{text}\n\n# Condition\n{condition}\n\n" "Does the text satisfy the condition? Answer yes or no."
 )  # noqa: E501
 
+DEFAULT_CONDITION_COT_TEMPLATE = (
+    "# Text\n{text}\n\n# Condition\n{condition}\n\n"
+    "Think step by step: analyze the text and condition, then determine if the text satisfies the condition. "
+    "Answer yes or no."
+)
+
+DEFAULT_CONDITION_FEW_SHOT_TEMPLATE = (
+    "# Examples\n{examples}\n\n"
+    "# Text\n{text}\n\n# Condition\n{condition}\n\n"
+    "Does the text satisfy the condition? Answer yes or no."
+)
+
+DEFAULT_CONDITION_COT_SHOT_TEMPLATE = (
+    "# Examples\n{examples}\n\n"
+    "# Text\n{text}\n\n# Condition\n{condition}\n\n"
+    "Think step by step: analyze the text and condition based on the examples, "
+    "then determine if the text satisfies the condition. Answer yes or no."
+)
+
 
 def get_extract_prompt(
     input_text: str,
     output_schema: Dict[str, str],
     knowledge_grounding: Optional[str] = None,
+    strategy: Optional[InferenceStrategy] = None,
+    examples: Optional[str] = None,
 ) -> str:
     """Build user prompt for extraction. output_schema: {key: instruction}."""
     instructions = "\n".join(f"- {k}: {v}" for k, v in output_schema.items())
-    body = DEFAULT_EXTRACT_USER_TEMPLATE.format(
-        input_text=input_text,
-        output_instructions=instructions,
-    )
+    strategy = strategy or InferenceStrategy.DIRECT
+    
+    # Map strategies to their corresponding templates
+    template_map = {
+        InferenceStrategy.DIRECT: lambda: DEFAULT_EXTRACT_USER_TEMPLATE.format(
+            input_text=input_text,
+            output_instructions=instructions,
+        ),
+        InferenceStrategy.COT: lambda: DEFAULT_EXTRACT_COT_TEMPLATE.format(
+            input_text=input_text,
+            output_instructions=instructions,
+        ),
+        InferenceStrategy.FEW_SHOT: lambda: DEFAULT_EXTRACT_FEW_SHOT_TEMPLATE.format(
+            examples=examples or "",
+            input_text=input_text,
+            output_instructions=instructions,
+        ),
+        InferenceStrategy.COT_SHOT: lambda: DEFAULT_EXTRACT_COT_SHOT_TEMPLATE.format(
+            examples=examples or "",
+            input_text=input_text,
+            output_instructions=instructions,
+        ),
+    }
+    
+    body = template_map.get(strategy, template_map[InferenceStrategy.DIRECT])()
+    
     if knowledge_grounding:
         body = f"# Background / grounding\n{knowledge_grounding}\n\n" + body
     return body
@@ -53,9 +130,34 @@ def get_condition_prompt(
     text: str,
     condition: str,
     knowledge_grounding: Optional[str] = None,
+    strategy: Optional[InferenceStrategy] = None,
+    examples: Optional[str] = None,
 ) -> str:
     """Build user prompt for LLM condition filter (yes/no)."""
-    body = DEFAULT_CONDITION_USER_TEMPLATE.format(text=text, condition=condition)
+    strategy = strategy or InferenceStrategy.DIRECT
+    
+    # Map strategies to their corresponding templates
+    template_map = {
+        InferenceStrategy.DIRECT: lambda: DEFAULT_CONDITION_USER_TEMPLATE.format(
+            text=text, condition=condition
+        ),
+        InferenceStrategy.COT: lambda: DEFAULT_CONDITION_COT_TEMPLATE.format(
+            text=text, condition=condition
+        ),
+        InferenceStrategy.FEW_SHOT: lambda: DEFAULT_CONDITION_FEW_SHOT_TEMPLATE.format(
+            examples=examples or "",
+            text=text,
+            condition=condition,
+        ),
+        InferenceStrategy.COT_SHOT: lambda: DEFAULT_CONDITION_COT_SHOT_TEMPLATE.format(
+            examples=examples or "",
+            text=text,
+            condition=condition,
+        ),
+    }
+    
+    body = template_map.get(strategy, template_map[InferenceStrategy.DIRECT])()
+    
     if knowledge_grounding:
         body = f"# Background\n{knowledge_grounding}\n\n" + body
     return body
@@ -95,12 +197,16 @@ def extract_one(
     *,
     system_prompt: Optional[str] = None,
     knowledge_grounding: Optional[str] = None,
+    strategy: Optional[InferenceStrategy] = None,
+    examples: Optional[str] = None,
     enable_vllm: bool = False,
     is_hf_model: bool = False,
     sampling_params: Optional[Dict] = None,
 ) -> Dict[str, Any]:
     """Extract structured fields from input_text using the model. Returns dict."""
-    user_content = get_extract_prompt(input_text, output_schema, knowledge_grounding)
+    user_content = get_extract_prompt(
+        input_text, output_schema, knowledge_grounding, strategy, examples
+    )
     messages = [
         {"role": "system", "content": system_prompt or DEFAULT_EXTRACT_SYSTEM},
         {"role": "user", "content": user_content},
@@ -142,12 +248,14 @@ def condition_filter_one(
     model: Any,
     *,
     knowledge_grounding: Optional[str] = None,
+    strategy: Optional[InferenceStrategy] = None,
+    examples: Optional[str] = None,
     enable_vllm: bool = False,
     is_hf_model: bool = False,
     sampling_params: Optional[Dict] = None,
 ) -> bool:
     """True iff the model says the text satisfies the condition (yes/no)."""
-    user_content = get_condition_prompt(text, condition, knowledge_grounding)
+    user_content = get_condition_prompt(text, condition, knowledge_grounding, strategy, examples)
     messages = [
         {"role": "system", "content": DEFAULT_CONDITION_SYSTEM},
         {"role": "user", "content": user_content},
