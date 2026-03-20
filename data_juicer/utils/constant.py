@@ -153,6 +153,8 @@ class MetaKeys(object):
     agent_request_id = "agent_request_id"
     agent_last_user_msg_idx = "agent_last_user_msg_idx"
     agent_last_assistant_msg_idx = "agent_last_assistant_msg_idx"
+    # # True if dialog_history / text / query / response were shrunk via head+tail cap
+    agent_dialog_history_compressed = "agent_dialog_history_compressed"
     # # from agent_bad_case_signal_mapper — structured, conservatively triaged
     agent_bad_case_signals = "agent_bad_case_signals"
     agent_bad_case_tier = "agent_bad_case_tier"
@@ -169,6 +171,7 @@ class MetaKeys(object):
     # # from tool_success_tagger_mapper
     tool_success_count = "tool_success_count"
     tool_fail_count = "tool_fail_count"
+    tool_unknown_count = "tool_unknown_count"
     tool_success_ratio = "tool_success_ratio"
     tool_results = "tool_results"
 

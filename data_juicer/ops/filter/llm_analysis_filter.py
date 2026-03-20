@@ -1,6 +1,6 @@
 import json
 import re
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 from loguru import logger
@@ -95,7 +95,7 @@ json
   },
   "flags": ["minor_grammar_issues"],
   "rationale": "The text is highly relevant and generally well-written, but suffers from some minor grammar issues and could be more useful with additional examples.  The topic is clearly Artificial Intelligence, and the difficulty is appropriate for an intermediate audience.",
-  "recommendation": "review"
+  "recommendation": ["review"]
 }
 """  # noqa: E501
     DEFAULT_INPUT_TEMPLATE = "# Data\n'''\n{data}\n'''\n\n# Response\njson\n"
@@ -214,6 +214,28 @@ json
 
         return input_prompt
 
+    @staticmethod
+    def _normalize_recommendation_to_str_list(val: Any) -> List[str]:
+        """Force stable Arrow/HF schema: ``recommendation`` is always ``list[str]``."""
+        if val is None:
+            return []
+        if isinstance(val, str):
+            s = val.strip()
+            return [s] if s else []
+        if isinstance(val, np.ndarray):
+            val = val.tolist()
+        if isinstance(val, (list, tuple)):
+            out: List[str] = []
+            for x in val:
+                if x is None:
+                    continue
+                sx = str(x).strip()
+                if sx:
+                    out.append(sx)
+            return out
+        sx = str(val).strip()
+        return [sx] if sx else []
+
     def parse_output(self, raw_output):
         def extract_outer_braces(s):
             if s is None or (isinstance(s, str) and not s.strip()):
@@ -235,6 +257,8 @@ json
             return 0, None, None
         if "flags" in data:
             data["flags"] = np.array(data["flags"], dtype=np.str_)
+        # Model outputs sometimes use "review" vs ["review"], breaking dataset shard alignment
+        data["recommendation"] = self._normalize_recommendation_to_str_list(data.get("recommendation"))
         tags = data.get("tags", None)
 
         dimension_scores = data.get("dimension_scores", None)

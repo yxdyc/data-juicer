@@ -17,9 +17,26 @@ DEFAULT_USER_LABEL = "用户"
 DEFAULT_ASSISTANT_LABEL = "助手"
 
 
+def _coerce_content_fragment(val: Any) -> str:
+    """Turn a content block's text-ish field into a single flat string (no .strip on dict)."""
+    if val is None:
+        return ""
+    if isinstance(val, str):
+        return val.strip()
+    if isinstance(val, dict):
+        for k in ("value", "text", "content"):
+            if k in val and val[k] not in (None, ""):
+                return _coerce_content_fragment(val[k])
+        return ""
+    if isinstance(val, list):
+        return "\n".join(_coerce_content_fragment(x) for x in val if x not in (None, "")).strip()
+    return str(val).strip()
+
+
 def _content_to_text(content: Any) -> str:
     """Extract plain text from message.content.
     Supports: str, list of {type, text} (OpenAI multimodal), list of str.
+    ``text`` may be nested (dict/list); Qwen-style ``thinking`` blocks are included.
     """  # noqa: E501
     if content is None:
         return ""
@@ -29,13 +46,23 @@ def _content_to_text(content: Any) -> str:
         parts = []
         for block in content:
             if isinstance(block, dict):
-                if block.get("type") == "text":
-                    parts.append((block.get("text") or "").strip())
-                elif block.get("type") == "input_text" or "text" in block:
-                    parts.append((block.get("text") or "").strip())
+                btype = block.get("type")
+                if btype == "text":
+                    parts.append(_coerce_content_fragment(block.get("text")))
+                elif btype == "input_text" or (btype not in ("thinking", "reasoning") and "text" in block):
+                    parts.append(_coerce_content_fragment(block.get("text")))
+                elif btype in ("thinking", "reasoning") or "thinking" in block or "reasoning_content" in block:
+                    # Qwen / DeepSeek / DashScope style reasoning (may omit type)
+                    parts.append(
+                        _coerce_content_fragment(
+                            block.get("thinking") or block.get("reasoning") or block.get("reasoning_content")
+                        )
+                    )
             elif isinstance(block, str):
                 parts.append(block.strip())
         return "\n".join(p for p in parts if p).strip()
+    if isinstance(content, dict):
+        return _coerce_content_fragment(content)
     return str(content).strip()
 
 
@@ -71,6 +98,53 @@ def _tool_calls_summary(
     if len(names) > max_names:
         display.append(f"...+{len(names) - max_names}")
     return "[Tool calls: " + ", ".join(display) + "]"
+
+
+def _compress_head_tail(text: str, max_chars: int, head_ratio: float = 0.62) -> str:
+    """If ``text`` exceeds ``max_chars``, keep head + tail with an explicit middle marker.
+
+    Designed for **write-back** to ``dialog_history`` / ``text`` so downstream sees the
+    same bounded view as prompt-side caps, while preserving error prefixes and trailing
+    stack/summary when possible. Middle is dropped (lossy); marker states that clearly.
+    """
+    if max_chars <= 0 or not text or len(text) <= max_chars:
+        return text
+    head_ratio = min(0.85, max(0.35, float(head_ratio)))
+    marker_reserve = 128
+    budget = max_chars - marker_reserve
+    if budget < 400:
+        cut = max(0, max_chars - 48)
+        return text[:cut] + "\n…[truncated — agent_dialog_normalize_mapper]…"
+
+    head_n = max(200, int(budget * head_ratio))
+    tail_n = budget - head_n
+    if tail_n < 200:
+        tail_n = 200
+        head_n = max(200, budget - tail_n)
+    omitted = len(text) - head_n - tail_n
+    if omitted <= 0:
+        return text
+    marker = (
+        f"\n\n[··· {omitted} chars omitted from middle; " "head+tail preserved — agent_dialog_normalize_mapper]\n\n"
+    )
+    if head_n + len(marker) + tail_n > max_chars:
+        over = head_n + len(marker) + tail_n - max_chars
+        head_n = max(120, head_n - over)
+    return text[:head_n] + marker + text[-tail_n:]
+
+
+def _apply_char_cap(
+    text: str,
+    max_chars: int,
+    head_ratio: float,
+    compressed_ref: Optional[List[bool]],
+) -> str:
+    """Apply :func:`_compress_head_tail` when ``max_chars`` > 0 and text is too long."""
+    if max_chars <= 0 or not text or len(text) <= max_chars:
+        return text
+    if compressed_ref is not None:
+        compressed_ref[0] = True
+    return _compress_head_tail(text, max_chars, head_ratio)
 
 
 def _extract_tool_types(messages: List[dict]) -> List[str]:
@@ -117,10 +191,33 @@ def _extract_skill_types(messages: List[dict]) -> List[str]:
 def _messages_to_history(
     messages: List[dict],
     include_system_in_first_user: bool = False,
+    *,
+    history_tool_result_max_chars: int = 10_000,
+    history_max_assistant_trace_chars: int = 0,
+    history_max_user_chars: int = 0,
+    history_compress_head_ratio: float = 0.62,
+    compressed_ref: Optional[List[bool]] = None,
 ) -> List[Tuple[str, str]]:
-    """Convert messages to [(query, response), ...]. User/assistant only."""
+    """Convert messages to [(query, response), ...]. User/assistant only.
+
+    Agent/tool note: within one user turn, the model may emit **multiple**
+    ``assistant`` messages (tool calls → ``tool`` → assistant again). Earlier
+    implementations **replaced** the assistant side each time, dropping
+    intermediate reasoning and tool traces. We **accumulate** consecutive
+    assistant segments (and still append each ``tool`` result onto the same
+    pair) so ``query`` / ``response`` / ``text`` match multi-step agent runs.
+
+    Optional caps: ``history_tool_result_max_chars`` per tool payload (default
+    ``10000``, same order as the old hard-coded slice; use ``0`` for unlimited);
+    ``history_max_assistant_trace_chars`` on the **whole** assistant side after
+    each update (``0`` = off); ``history_max_user_chars`` on user text.
+    When a cap applies, middle is omitted with an explicit marker
+    (head+tail). Set ``compressed_ref`` to a one-element list ``[False]`` to
+    record whether any compression ran.
+    """
     history = []
     pending_system = []
+    ratio = history_compress_head_ratio
 
     for m in messages:
         role = (m.get("role") or "").lower()
@@ -135,23 +232,63 @@ def _messages_to_history(
             if pending_system:
                 content = "\n\n".join(pending_system + [content]).strip()
                 pending_system = []
+            content = _apply_char_cap(content, history_max_user_chars, ratio, compressed_ref)
             history.append((content, ""))
             continue
         if role == "assistant":
             if not content and tool_calls:
                 content = _tool_calls_summary(tool_calls)
+            piece = content or ""
             if history:
-                history[-1] = (history[-1][0], content)
+                prev_q, prev_r = history[-1]
+                if prev_r and piece:
+                    new_r = prev_r + "\n\n" + piece
+                elif piece:
+                    new_r = piece
+                else:
+                    new_r = prev_r
+                new_r = _apply_char_cap(
+                    new_r,
+                    history_max_assistant_trace_chars,
+                    ratio,
+                    compressed_ref,
+                )
+                history[-1] = (prev_q, new_r)
             else:
-                history.append(("", content))
+                piece_capped = _apply_char_cap(
+                    piece,
+                    history_max_assistant_trace_chars,
+                    ratio,
+                    compressed_ref,
+                )
+                history.append(("", piece_capped))
             continue
         if role == "tool":
+            body = _apply_char_cap(
+                content,
+                history_tool_result_max_chars,
+                ratio,
+                compressed_ref,
+            )
             # Append tool result to last assistant response for context
             if history and history[-1][1]:
-                history[-1] = (
-                    history[-1][0],
-                    history[-1][1] + "\n[Tool result]\n" + content[:500],
+                new_r = history[-1][1] + "\n[Tool result]\n" + body
+                new_r = _apply_char_cap(
+                    new_r,
+                    history_max_assistant_trace_chars,
+                    ratio,
+                    compressed_ref,
                 )
+                history[-1] = (history[-1][0], new_r)
+            elif history:
+                lone = "[Tool result]\n" + body
+                lone = _apply_char_cap(
+                    lone,
+                    history_max_assistant_trace_chars,
+                    ratio,
+                    compressed_ref,
+                )
+                history[-1] = (history[-1][0], lone)
             continue
     return history
 
@@ -236,6 +373,10 @@ class AgentDialogNormalizeMapper(Mapper):
     Supports multi-format tool_calls (e.g. tool_calls[].function.name as in
     OpenAI / demos/local/demo-agent-data-content.json) and configurable
     user/assistant labels.
+    Optional ``history_*_max_chars`` caps keep head+tail with an explicit
+    middle-omitted marker so ``dialog_history``, flattened ``text``, and last
+    ``query`` / ``response`` stay aligned; ``meta.agent_dialog_history_compressed``
+    is set when any cap fires.
     """
 
     def __init__(
@@ -257,6 +398,10 @@ class AgentDialogNormalizeMapper(Mapper):
             "trace_id",
             "id",
         ),
+        history_tool_result_max_chars: int = 10_000,
+        history_max_assistant_trace_chars: int = 0,
+        history_max_user_chars: int = 0,
+        history_compress_head_ratio: float = 0.62,
         **kwargs,
     ):
         super().__init__(text_key=text_key, **kwargs)
@@ -272,6 +417,10 @@ class AgentDialogNormalizeMapper(Mapper):
         self.copy_lineage_fields = copy_lineage_fields
         self.copy_request_id = copy_request_id
         self.request_id_keys = request_id_keys
+        self.history_tool_result_max_chars = history_tool_result_max_chars
+        self.history_max_assistant_trace_chars = history_max_assistant_trace_chars
+        self.history_max_user_chars = history_max_user_chars
+        self.history_compress_head_ratio = history_compress_head_ratio
 
     def process_single(self, sample):
         messages = sample.get(self.messages_key) or []
@@ -280,9 +429,15 @@ class AgentDialogNormalizeMapper(Mapper):
         if not isinstance(messages, list):
             messages = []
 
+        compressed_ref = [False]
         history = _messages_to_history(
             messages,
             include_system_in_first_user=self.include_system_in_first_user,
+            history_tool_result_max_chars=self.history_tool_result_max_chars,
+            history_max_assistant_trace_chars=self.history_max_assistant_trace_chars,
+            history_max_user_chars=self.history_max_user_chars,
+            history_compress_head_ratio=self.history_compress_head_ratio,
+            compressed_ref=compressed_ref,
         )
         flat_text = _flatten_history_to_text(
             history,
@@ -302,6 +457,8 @@ class AgentDialogNormalizeMapper(Mapper):
         if Fields.meta not in sample:
             sample[Fields.meta] = {}
         meta = sample[Fields.meta]
+        if compressed_ref[0]:
+            meta[MetaKeys.agent_dialog_history_compressed] = True
         meta[MetaKeys.agent_turn_count] = len(history)
         if self.extract_tool_skill_tags:
             meta[MetaKeys.agent_tool_types] = _extract_tool_types(messages)

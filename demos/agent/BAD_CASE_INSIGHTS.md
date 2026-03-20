@@ -11,6 +11,15 @@
 
 目标：为「某个 `request_model`（`meta.agent_request_model`）」产出**可复核**线索，优先 **precision > recall**。
 
+## Agent 对话形态：多段 assistant 与 tool（必读）
+
+智能体数据**不是**严格的「user → assistant → user → assistant」一轮一轮交替：
+
+- 常见模式：`user` → 若干次 `(assistant + tool_calls) → tool → assistant → tool → …` → 最终 assistant 文本或下一轮 `user`。
+- **`agent_dialog_normalize_mapper`** 将 `messages` 压成 `dialog_history` / `query` / `response` / `text` 时，对**同一 user 回合内多段 assistant** 必须**拼接保留**（含 tool summary）；可选 **`history_*_max_chars`** 对 tool/助手侧做**首尾保留 + 明确的中段省略标记**写回（与仅 prompt 截断不同），并打 **`meta.agent_dialog_history_compressed`**。否则下游 **`llm_quality_score_filter` / `llm_analysis_filter`** 只看到最后一次助手片段，容易误判「没干活」或「偏题」。
+- **`tool_success_tagger_mapper`** 按 **每条 `role=tool` 消息**计数；`failed` / `No such file` 等会记 **fail**。在探索性策略里单次失败可能随后被纠正——第 9 步提供 **`min_tool_fail_count_for_signal`**（默认 1；菜谱可调到 2+）再抬 `tool_message_error_pattern`，并与 **`meta.tool_unknown_count`**（无法-regex 分类的 tool 行）一起看。
+- **Dialog 打标算子**仍用 `dialog_history` 的 (q,r) 列表与 `max_round`；历史拼接正确后，多轮语义更一致。
+
 ## 数据血缘字段（normalize 自动写入）
 
 | 原始字段 | `meta` 键 | 用途 |
@@ -25,8 +34,9 @@
 
 | 来源 | 字段 | 默认行为 |
 |------|------|----------|
-| `tool_success_tagger_mapper` | `tool_fail_count` | `high`：`tool_message_error_pattern` |
-| 同上 | `tool_success_ratio` + 轮次数 | `medium`：比例过低（≥`min_tool_rounds_for_ratio_signal` 轮） |
+| `tool_success_tagger_mapper` | `tool_fail_count` | `high`：`tool_message_error_pattern`（需 fail ≥ `min_tool_fail_count_for_signal`） |
+| 同上 | `tool_unknown_count` | 不参与 ratio；供排查「工具返回非典型文本/JSON」 |
+| 同上 | `tool_success_ratio` + 轮次数 | `medium`：比例过低（≥`min_tool_rounds_for_ratio_signal` 轮；分母不含 unknown） |
 | `usage_counter_mapper` | `total_tokens` 等 | 可选绝对阈值 → `medium` |
 | normalize 血缘 | `agent_total_cost_time_ms` | 可选绝对阈值 → `medium` |
 | `llm_analysis_filter` | `llm_analysis_score` + `llm_analysis_record.recommendation` | discard + 低分 → `high`/`medium`（可 `*_discard_must_be_strict`） |
@@ -39,7 +49,9 @@
 分层：
 
 - **`meta.agent_bad_case_signals`**：`{code, detail, weight}`。  
-- **`meta.agent_bad_case_tier`**：`high_precision` | `watchlist` | `none`。
+- **`meta.agent_bad_case_tier`**（机器枚举，jq 仍用英文）：`high_precision` | `watchlist` | `none`。  
+  - 报告中译为 **强怀疑（主证据）** / **待观察（弱证据）** / **未标记**；**`high_precision` 不是「模型精度高」**，而是「强怀疑、建议优先复核」。
+  - 长 agent 轨迹易出现 **多次 tool 返回含 error 模式**：若 **`high_precision_on_tool_fail_alone: false`**（全量菜谱默认），仅凭 tool 计数**不会**单独升强怀疑档；可调 **`min_tool_fail_count_for_signal`** 控制何时打出 tool 信号。
 
 YAML 中请将 **`llm_analysis_discard_must_be_strict`** / **`llm_text_quality_discard_must_be_strict`** 保持为 `true`，避免把 `review` 当坏样本。
 

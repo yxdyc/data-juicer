@@ -4,6 +4,7 @@
 # Tag tool call success/failure from messages (role=tool content).
 # Configurable success/error patterns for multi-agent and multi-language.
 
+import json
 import re
 from typing import Any, List, Optional
 
@@ -30,20 +31,37 @@ DEFAULT_ERROR_PATTERNS = [
 
 
 def _content_to_str(content: Any) -> str:
-    """Normalize tool message content to string (str, list of {type,text}, or [])."""
+    """Normalize tool message content to string.
+
+    Some runtimes return JSON objects or multimodal lists; regex classifiers
+    need a stable string form.
+    """
     if content is None:
         return ""
     if isinstance(content, str):
         return content.strip()
+    if isinstance(content, dict):
+        try:
+            return json.dumps(content, ensure_ascii=False)[:10000]
+        except (TypeError, ValueError):
+            return str(content).strip()
     if isinstance(content, list):
         if not content:
             return ""
         parts = []
         for block in content:
             if isinstance(block, dict) and block.get("type") == "text":
-                parts.append((block.get("text") or "").strip())
+                t = block.get("text")
+                if isinstance(t, str):
+                    parts.append(t.strip())
+                elif isinstance(t, dict):
+                    parts.append(_content_to_str(t))
+                else:
+                    parts.append(_content_to_str(t))
             elif isinstance(block, str):
                 parts.append(block.strip())
+            elif isinstance(block, dict):
+                parts.append(_content_to_str(block))
         return "\n".join(parts).strip()
     return str(content).strip()
 
@@ -98,6 +116,7 @@ class ToolSuccessTaggerMapper(Mapper):
         results = []
         success_count = 0
         fail_count = 0
+        unknown_count = 0
 
         for m in messages:
             role = (m.get("role") or "").lower()
@@ -110,6 +129,8 @@ class ToolSuccessTaggerMapper(Mapper):
                 success_count += 1
             elif label == "error":
                 fail_count += 1
+            else:
+                unknown_count += 1
 
         total = success_count + fail_count
         ratio = (success_count / total) if total else None
@@ -119,6 +140,7 @@ class ToolSuccessTaggerMapper(Mapper):
         meta = sample[Fields.meta]
         meta[MetaKeys.tool_success_count] = success_count
         meta[MetaKeys.tool_fail_count] = fail_count
+        meta[MetaKeys.tool_unknown_count] = unknown_count
         meta[MetaKeys.tool_success_ratio] = ratio
         if self.store_per_tool_results:
             meta[MetaKeys.tool_results] = results

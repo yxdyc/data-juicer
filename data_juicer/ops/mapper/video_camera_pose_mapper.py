@@ -315,6 +315,8 @@ class VideoCameraPoseMapper(Mapper):
 
 
 class droid_args:
+    """Configuration bundle for DROID-SLAM / MegaSAM-style pose estimation (internal helper)."""
+
     def __init__(self, image_size):
         self.weights = os.path.join(DATA_JUICER_ASSETS_CACHE, "mega-sam", "checkpoints", "megasam_final.pth")
         self.disable_vis = True

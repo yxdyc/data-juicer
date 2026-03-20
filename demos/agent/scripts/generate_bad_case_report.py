@@ -28,7 +28,142 @@ if str(_SCRIPTS_DIR) not in sys.path:
 
 from analyze_bad_case_cohorts import aggregate_cohort_stdlib, load_merged_rows  # noqa: E402
 from bad_case_signal_support import SIGNAL_SUPPORT_ROWS  # noqa: E402
-from dj_export_row import get_dj_meta  # noqa: E402
+from dj_export_row import get_dj_meta, get_dj_stats  # noqa: E402
+
+# 机器枚举（jsonl / jq）不变；页面与图例用中文降低误解（原 high_precision ≠「高精度模型」）
+TIER_LABEL_ZH: Dict[str, str] = {
+    "high_precision": "强怀疑（主证据）",
+    "watchlist": "待观察（弱证据）",
+    "none": "未标记",
+}
+
+
+def _tier_zh(machine: str) -> str:
+    return TIER_LABEL_ZH.get(str(machine), str(machine))
+
+
+def _fmt_evidence_val(val: object, maxlen: int = 200) -> str:
+    if val is None:
+        return "—"
+    s = str(val).strip()
+    if len(s) > maxlen:
+        return s[:maxlen] + "…"
+    return s
+
+
+def _evidence_rows_for_signal(code: str, row: dict, meta: dict, stats: dict) -> List[Tuple[str, str]]:
+    """Map signal code → (field_path, display_value) for report tables."""
+    rows: List[Tuple[str, str]] = []
+
+    def add(k: str, v: object) -> None:
+        rows.append((k, _fmt_evidence_val(v)))
+
+    if code == "tool_message_error_pattern":
+        add("meta.tool_success_count", meta.get("tool_success_count"))
+        add("meta.tool_fail_count", meta.get("tool_fail_count"))
+        add("meta.tool_unknown_count", meta.get("tool_unknown_count"))
+        add("meta.tool_success_ratio", meta.get("tool_success_ratio"))
+        add("算子", "tool_success_tagger_mapper（regex 扫 role=tool）")
+    elif code == "low_tool_success_ratio":
+        add("meta.tool_success_ratio", meta.get("tool_success_ratio"))
+        add("meta.tool_success_count", meta.get("tool_success_count"))
+        add("meta.tool_fail_count", meta.get("tool_fail_count"))
+    elif code == "llm_agent_analysis_eval_low":
+        add("stats.llm_analysis_score", stats.get("llm_analysis_score"))
+        rec = stats.get("llm_analysis_record")
+        if isinstance(rec, dict):
+            add("stats.llm_analysis_record.recommendation", rec.get("recommendation"))
+        add("算子", "llm_analysis_filter")
+    elif code == "llm_reply_quality_eval_low":
+        add("stats.llm_quality_score", stats.get("llm_quality_score"))
+        add("算子", "llm_quality_score_filter")
+    elif code == "suspect_empty_or_trivial_final_response":
+        add("sample.query 长度", len(row.get("query") or ""))
+        add("sample.response 长度", len(row.get("response") or ""))
+        add("说明", "agent_dialog_normalize 后的末轮 query/response")
+    elif code == "high_token_usage":
+        add("meta.total_tokens", meta.get("total_tokens"))
+        add("算子", "usage_counter_mapper")
+    elif code == "high_latency_ms":
+        add("meta.agent_total_cost_time_ms", meta.get("agent_total_cost_time_ms"))
+        add("算子", "agent_dialog_normalize_mapper.copy_lineage_fields")
+    elif code == "negative_sentiment_label_hint":
+        add("meta.dialog_sentiment_labels", meta.get("dialog_sentiment_labels"))
+        add("算子", "dialog_sentiment_detection_mapper")
+    elif code == "high_perplexity":
+        add("stats.perplexity", stats.get("perplexity"))
+        add("算子", "perplexity_filter")
+    elif code == "hard_query_low_reply_quality_conjunction":
+        add("stats.llm_difficulty_score", stats.get("llm_difficulty_score"))
+        add("stats.llm_quality_score", stats.get("llm_quality_score"))
+        add("算子", "llm_difficulty_score_filter ∩ llm_quality_score_filter")
+    else:
+        add("(见归因总表)", "本信号上游字段未逐项绑定，可查 meta / stats 全文")
+    # de-dup keys keeping first
+    seen = set()
+    out: List[Tuple[str, str]] = []
+    for k, v in rows:
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append((k, v))
+    return out
+
+
+def _signal_evidence_tables_html(signals: List[dict], row: dict) -> str:
+    """Per-signal small tables: code + upstream fields + values."""
+    meta = get_dj_meta(row)
+    stats = get_dj_stats(row)
+    blocks = []
+    for sig in signals:
+        if not isinstance(sig, dict):
+            continue
+        code = str(sig.get("code") or "")
+        if not code:
+            continue
+        w = html.escape(str(sig.get("weight") or ""))
+        det = html.escape(_fmt_evidence_val(sig.get("detail"), 300))
+        erows = _evidence_rows_for_signal(code, row, meta, stats)
+        body = "".join(
+            f"<tr><td><code>{html.escape(k)}</code></td><td>{html.escape(v)}</td></tr>"
+            for k, v in erows
+        )
+        blocks.append(
+            f"<div class='sig-evidence'><div class='sig-evidence-h'>"
+            f"<code>{html.escape(code)}</code> "
+            f"<span class='wtag'>weight={w}</span> "
+            f"<span class='det'>{det}</span></div>"
+            f"<table class='inner'><tbody>{body}</tbody></table></div>"
+        )
+    if not blocks:
+        return "<p class='note'>本样本无结构化信号。</p>"
+    return "<div class='sig-evidence-wrap'>" + "".join(blocks) + "</div>"
+
+
+def _global_evidence_snapshot_html(row: dict) -> str:
+    """Snapshot of key meta/stats for quick sanity check."""
+    meta = get_dj_meta(row)
+    stats = get_dj_stats(row)
+    pairs = [
+        ("meta.tool_success_count", meta.get("tool_success_count")),
+        ("meta.tool_fail_count", meta.get("tool_fail_count")),
+        ("meta.tool_unknown_count", meta.get("tool_unknown_count")),
+        ("meta.tool_success_ratio", meta.get("tool_success_ratio")),
+        ("meta.total_tokens", meta.get("total_tokens")),
+        ("meta.agent_turn_count", meta.get("agent_turn_count")),
+        ("stats.llm_analysis_score", stats.get("llm_analysis_score")),
+        ("stats.llm_quality_score", stats.get("llm_quality_score")),
+        ("stats.llm_difficulty_score", stats.get("llm_difficulty_score")),
+    ]
+    body = "".join(
+        f"<tr><td><code>{html.escape(k)}</code></td><td>{html.escape(_fmt_evidence_val(v))}</td></tr>"
+        for k, v in pairs
+    )
+    return (
+        "<section class='snap'><h4>关键 meta / stats 快照</h4>"
+        "<p class='note'>与归因链对照；缺失项为 <code>—</code>（可能未跑对应算子或未写入导出）。</p>"
+        f"<table class='inner'><tbody>{body}</tbody></table></section>"
+    )
 
 
 def _get_plt():
@@ -155,6 +290,7 @@ def _collect_drilldown(rows: List[dict], limit: int) -> List[dict]:
         out.append(
             {
                 "tier": tier,
+                "tier_label_zh": _tier_zh(tier),
                 "request_id": rid_s,
                 "u_idx": u_idx,
                 "a_idx": a_idx,
@@ -165,6 +301,8 @@ def _collect_drilldown(rows: List[dict], limit: int) -> List[dict]:
                 "signals_json": _json_pretty(signals),
                 "insight_json": _json_pretty(insight),
                 "meta_json": _json_pretty(meta_subset),
+                "evidence_snapshot_html": _global_evidence_snapshot_html(row),
+                "signal_evidence_html": _signal_evidence_tables_html(signals, row),
             }
         )
     return out
@@ -182,23 +320,27 @@ def _idx_badge(u_idx: object, a_idx: object) -> str:
 def _drilldown_section_html(drill: List[dict]) -> str:
     if not drill:
         return (
-            "<h2>样本钻取（high / watchlist）</h2>"
+            "<h2>样本钻取（强怀疑 / 待观察）</h2>"
             "<p class='note'>本批无 <code>high_precision</code> / "
             "<code>watchlist</code> 样本，或已将钻取条数上限设为 0。</p>"
         )
     cards = []
     for i, d in enumerate(drill):
         anchor = f"bc-drill-{i}"
-        tier = html.escape(d["tier"])
+        tier_m = html.escape(d["tier"])
+        tier_show = html.escape(d.get("tier_label_zh") or _tier_zh(d["tier"]))
         tier_cls = "tier-hp" if d["tier"] == "high_precision" else "tier-wl"
         rid = html.escape(d["request_id"] or "—")
         idx_txt = html.escape(_idx_badge(d["u_idx"], d["a_idx"]))
         model = html.escape(d["model"] or "—")
         pt = html.escape(d["pt"] or "—")
+        ev_snap = d.get("evidence_snapshot_html") or ""
+        sig_ev = d.get("signal_evidence_html") or ""
         cards.append(
             f'<div class="drill-card" id="{anchor}">'
             '<div class="drill-summary">'
-            f'<span class="tier-tag {tier_cls}">{tier}</span> '
+            f'<span class="tier-tag {tier_cls}" title="机器值 {tier_m}">{tier_show}</span> '
+            f'<span class="tier-mach"><code>{tier_m}</code></span> '
             f'<a class="anchor-link" href="#{anchor}" title="锚点">#{i}</a> '
             f"<code class=\"rid\" title=\"request_id / trace / id\">{rid}</code> "
             f'<span class="idx" title="messages 中下标（0-based）">{idx_txt}</span> '
@@ -207,12 +349,15 @@ def _drilldown_section_html(drill: List[dict]) -> str:
             "展开字段</button>"
             "</div>"
             '<div class="drill-body" hidden>'
+            f"{ev_snap}"
+            "<h4 class='ev-h'>各信号 ↔ 上游字段与取值</h4>"
+            f"{sig_ev}"
             '<div class="field-grid">'
             "<section><h4>query</h4>"
             f"<pre class=\"drill-pre\">{html.escape(d['query'])}</pre></section>"
             "<section><h4>response</h4>"
             f"<pre class=\"drill-pre\">{html.escape(d['response'])}</pre></section>"
-            "<section><h4>agent_bad_case_signals</h4>"
+            "<section><h4>agent_bad_case_signals（JSON）</h4>"
             f"<pre class=\"drill-pre\">{html.escape(d['signals_json'])}</pre></section>"
             "<section><h4>agent_insight_llm</h4>"
             f"<pre class=\"drill-pre\">{html.escape(d['insight_json'])}</pre></section>"
@@ -221,12 +366,11 @@ def _drilldown_section_html(drill: List[dict]) -> str:
             "</div></div></div>"
         )
     block = (
-        "<h2>样本钻取（high / watchlist）</h2>"
-        "<p class='note'>每条可展开查看 <code>query</code>、<code>response</code>、"
-        "结构化信号与 LLM insight；表头含 <strong>request_id</strong>（及后备 "
-        "<code>trace_id</code> / <code>id</code>）与 "
-        "<strong>messages</strong> 中最后 user/assistant 的下标，便于对齐日志与展陈。"
-        "<code>#n</code> 为页内锚点，可复制浏览器地址栏 fragment 分享。</p>"
+        "<h2>样本钻取（强怀疑 / 待观察）</h2>"
+        "<p class='note'>卡片标签为<strong>中文分档</strong>；旁注 <code>high_precision</code> / "
+        "<code>watchlist</code> 为导出中的机器枚举。展开后可见 <strong>meta/stats 快照</strong>、"
+        "每条 signal 对应的<strong>上游字段与当前取值</strong>，再对照 <code>query/response</code>。"
+        "<code>#n</code> 为页内锚点。</p>"
         '<div class="drill-list">'
         f"{''.join(cards)}</div>"
     )
@@ -260,19 +404,21 @@ def _chart_tier_bar(tier_cnt: Counter, plt_mod) -> Optional[str]:
     if not labels:
         labels = list(tier_cnt.keys())
     vals = [tier_cnt[t] for t in labels]
-    fig, ax = plt_mod.subplots(figsize=(6, 3.2))
+    labels_zh = [f"{_tier_zh(t)}\n({t})" for t in labels]
+    fig, ax = plt_mod.subplots(figsize=(7, 3.5))
     colors = {
         "high_precision": "#c0392b",
         "watchlist": "#f39c12",
         "none": "#95a5a6",
     }
     ax.bar(
-        labels,
+        labels_zh,
         vals,
         color=[colors.get(x, "#3498db") for x in labels],
     )
-    ax.set_title("Bad-case tier counts")
+    ax.set_title("Bad-case 分档计数（中文为展示名，括号为导出枚举）")
     ax.set_ylabel("Samples")
+    plt_mod.setp(ax.xaxis.get_majorticklabels(), rotation=12, ha="center")
     fig.tight_layout()
     return _fig_to_data_uri(fig, plt_mod)
 
@@ -309,9 +455,10 @@ def _chart_by_model(model_tier: Dict[str, Counter], plt_mod) -> Optional[str]:
         vs = [model_tier[m].get(tier, 0) for m in models]
         if not any(vs):
             continue
-        ax.bar(models, vs, bottom=bottom, label=tier, color=colors[tier], width=0.65)
+        leg = f"{_tier_zh(tier)} ({tier})"
+        ax.bar(models, vs, bottom=bottom, label=leg, color=colors[tier], width=0.65)
         bottom = [b + v for b, v in zip(bottom, vs)]
-    ax.set_title("Tier mix by agent_request_model")
+    ax.set_title("按模型的分档占比（图例：中文名 + 机器枚举）")
     ax.set_ylabel("Samples")
     ax.legend()
     plt_mod.setp(ax.xaxis.get_majorticklabels(), rotation=30, ha="right")
@@ -335,18 +482,23 @@ def _html_page(
 ) -> str:
     gen_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     tier_rows = "".join(
-        f"<tr><td>{html.escape(k)}</td><td>{v}</td></tr>"
+        "<tr>"
+        f"<td>{html.escape(_tier_zh(k))}</td>"
+        f"<td><code>{html.escape(k)}</code></td>"
+        f"<td>{v}</td>"
+        "</tr>"
         for k, v in sorted(tier_cnt.items(), key=lambda x: -x[1])
     )
     cohort_lines = []
     for r in cohort_rows:
         if not r.get("count") and not r.get("top_signal_codes"):
             continue
+        tm = str(r.get("tier", "") or "")
         cohort_lines.append(
             "<tr>"
             f"<td>{html.escape(str(r.get('agent_request_model', '')))}</td>"
             f"<td>{html.escape(str(r.get('agent_pt', '')))}</td>"
-            f"<td>{html.escape(str(r.get('tier', '')))}</td>"
+            f"<td>{html.escape(_tier_zh(tm))} <code>{html.escape(tm)}</code></td>"
             f"<td>{int(r.get('count') or 0)}</td>"
             f"<td>{html.escape(str(r.get('top_signal_codes', '')))}</td>"
             "</tr>"
@@ -361,7 +513,7 @@ def _html_page(
             )
         lis = "".join(parts)
         sample_block = (
-            "<h2>Insight headlines (high_precision sample)</h2><ul>"
+            "<h2>Insight 摘录（强怀疑档 / high_precision）</h2><ul>"
             f"{lis}</ul>"
         )
 
@@ -427,10 +579,35 @@ def _html_page(
         "pre.drill-pre{margin:0;white-space:pre-wrap;word-break:break-word;"
         "max-height:320px;overflow:auto;font-size:0.82rem;line-height:1.45;"
         "background:#1e1e1e;color:#d4d4d4;padding:10px;border-radius:6px;}"
+        ".tier-mach{font-size:0.78rem;color:#888;}"
+        ".tier-legend li{margin:6px 0;}"
+        "table.inner{font-size:0.82rem;margin:0.5rem 0;width:100%;}"
+        "table.inner td:first-child{white-space:nowrap;width:38%;vertical-align:top;}"
+        ".sig-evidence-wrap{display:flex;flex-direction:column;gap:10px;margin:0.8rem 0;}"
+        ".sig-evidence{border:1px solid #e0e0e0;border-radius:6px;padding:8px 10px;background:#fcfcfc;}"
+        ".sig-evidence-h{margin-bottom:6px;font-size:0.88rem;}"
+        ".sig-evidence .wtag{color:#555;font-size:0.8rem;margin-left:6px;}"
+        ".sig-evidence .det{color:#666;font-size:0.8rem;margin-left:6px;}"
+        ".snap table.inner{margin-top:4px;}"
+        "h4.ev-h{margin:12px 0 6px;font-size:0.95rem;}"
     )
     thead = (
         "<thead><tr><th>agent_request_model</th><th>agent_pt</th>"
-        "<th>tier</th><th>count</th><th>top_signal_codes</th></tr></thead>"
+        "<th>tier（中文 / 枚举）</th><th>count</th><th>top_signal_codes</th></tr></thead>"
+    )
+    tier_legend = (
+        "<h2>Tier 分层怎么读</h2>"
+        "<ul class='tier-legend'>"
+        "<li><strong>强怀疑（主证据）</strong> — 机器值 <code>high_precision</code>："
+        "建议优先人工复核（多为 LLM eval 主证据）。"
+        "若菜谱设 <code>high_precision_on_tool_fail_alone: true</code>，"
+        "仅凭 tool 正则命中多次失败也可进此档。</li>"
+        "<li><strong>待观察（弱证据）</strong> — <code>watchlist</code>："
+        "启发式或单一弱证据，不宜直接等同「坏样本」。</li>"
+        "<li><strong>未标记</strong> — <code>none</code>：未命中分层规则。</li>"
+        "</ul>"
+        "<p class='note'><code>high_precision</code> 在此项目中表示 "
+        "「强怀疑需复核」而非「模型高精度」；jq / JSON 仍用英文枚举。</p>"
     )
     adv = (
         "<p>进阶说明见 <code>demos/agent/BAD_CASE_INSIGHTS.md</code>、"
@@ -452,11 +629,12 @@ def _html_page(
   Rows: <strong>{n_rows}</strong>
 </div>
 <h2>Tier counts</h2>
-<table><thead><tr><th>Tier</th><th>Count</th></tr></thead>
+<table><thead><tr><th>展示名</th><th>机器枚举</th><th>条数</th></tr></thead>
 <tbody>{tier_rows}</tbody></table>
+{tier_legend}
 <h2>Bad-case mining · 归因链</h2>
 <p>下列说明各 <code>agent_bad_case_signals[].code</code> 依赖的 <strong>meta / stats</strong> 字段
-及典型算子来源（自明支撑 bad case mining）。</p>
+及典型算子来源（自明支撑 bad case mining）。下方<strong>样本钻取</strong>中按条展示取值。</p>
 {attribution_table}
 {drilldown_html}
 <h2>Charts</h2>

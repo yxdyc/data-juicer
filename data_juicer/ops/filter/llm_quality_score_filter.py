@@ -70,7 +70,7 @@ json
   },
   "flags": ["accuracy_concern", "logical_confusion"],
   "rationale": "The text provides rich information but suffers from logical confusion and lacks contextual coherence. Excellent grammatical structure offset by factual inaccuracies.",
-  "recommendation": "review"
+  "recommendation": ["review"]
 }
 """  # noqa: E501
     DEFAULT_DIM_REQUIRED_KEYS = ["accuracy", "grammar", "informativeness", "coherence"]

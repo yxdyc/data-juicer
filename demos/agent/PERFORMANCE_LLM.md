@@ -23,6 +23,24 @@
 | **换小/快模型** | `api_model` / `api_or_hf_model` | 例如技能归纳里 **`qwen3.5-27B` → `qwen-turbo`** 做开发迭代 |
 | **注释整条 op** | 非当前分析必需的 dialog 维度等 | 开发时关掉几条 mapper，等价成倍减少请求 |
 
+### 2.1 `dialog_*_mapper` 为什么能到「每样本 ~100s」
+
+- **导出 / formatter 的长度截断通常不作用在 `dialog_history` 上**。Agent 流水线里 `response` 往往含 **整段 tool 轨迹**（多段 assistant + `[Tool result]`），**单轮即可数万～十几万字符**，全额进入 `dialog_*` 的 user prompt。
+- 四个算子（intent / sentiment / topic / sentiment_intensity）对 **``dialog_history`` 里每一轮** 各打 **1 次** API；实现上还会在末尾 **再 append 一轮** `(query_key, response_key)`，因此 **单用户轮次** 的数据也常见 **≥2 次调用 / 算子 / 样本**。
+- **日志里 `num_proc=5` 与 `100s/ examples`**：多为 **单进程内串行的多轮调用 + 超大输入 + 重试** 叠加，不是「只发了一条消息」。
+
+**优先手段（已写入默认菜谱示例）：**
+
+| 手段 | 说明 |
+|------|------|
+| **`max_response_chars_for_prompt` / `max_query_chars_for_prompt`** | 仅截断 **送入 LLM 的** query/response 字符串，**不改**样本落盘内容；缓解超长 tool 日志 |
+| **`history_tool_result_max_chars` / `history_max_assistant_trace_chars`**（`agent_dialog_normalize_mapper`） | **写回** `dialog_history` / `text` / `query` / `response`：超长时对单条 tool 或整段助手侧做 **首尾保留 + 中段省略标记**（`meta.agent_dialog_history_compressed`），可与上项叠加；代码默认单 tool **10000**（与旧版 `[:10000]` 同量级）、整段助手侧默认关闭；**`0` = 不限制** |
+| **`max_round`** | 控制拼进 prompt 的历史块数（每轮对应 4 段模板文本） |
+| **`try_num`** | 解析失败时的重试次数 |
+| **`sampling_params.max_tokens`** | 限制模型侧输出长度 |
+
+开发阶段可再关掉 2～3 个 `dialog_*` 算子，只保留 sentiment 或 intent。
+
 ## 3. 减少 token（更快、更便宜）
 
 | 超参 | 说明 |

@@ -85,6 +85,10 @@ class AgentBadCaseSignalMapper(Mapper):
     Each signal group can be toggled via constructor flags. ``high`` weight feeds
     ``high_precision`` tier (with config); ``medium`` feeds ``watchlist`` only.
 
+    **Tool-heavy agent runs:** use ``min_tool_fail_count_for_signal`` to avoid
+    treating a single exploratory tool error (common before recovery) as strong
+    bad-case evidence.
+
     **P-percentile calibration** (optional): set ``auto_calibrate_thresholds`` and
     ``calibration_json_path`` to a JSON file produced by
     ``demos/agent/scripts/compute_percentile_thresholds.py --write-calibration``.
@@ -100,6 +104,10 @@ class AgentBadCaseSignalMapper(Mapper):
         response_key: str = "response",
         # --- tool path ---
         signal_on_tool_fail: bool = True,
+        # Agent runs often include exploratory tool errors (e.g. wrong path)
+        # before recovery; require this many pattern-matched **error** tool
+        # messages before emitting ``tool_message_error_pattern``.
+        min_tool_fail_count_for_signal: int = 1,
         signal_on_low_tool_success_ratio: bool = True,
         tool_success_ratio_max_for_signal: float = 0.499,
         min_tool_rounds_for_ratio_signal: int = 2,
@@ -147,6 +155,7 @@ class AgentBadCaseSignalMapper(Mapper):
         self.query_key = query_key
         self.response_key = response_key
         self.signal_on_tool_fail = signal_on_tool_fail
+        self.min_tool_fail_count_for_signal = max(1, int(min_tool_fail_count_for_signal))
         self.signal_on_low_tool_success_ratio = signal_on_low_tool_success_ratio
         self.tool_success_ratio_max_for_signal = tool_success_ratio_max_for_signal
         self.min_tool_rounds_for_ratio_signal = min_tool_rounds_for_ratio_signal
@@ -319,7 +328,7 @@ class AgentBadCaseSignalMapper(Mapper):
         signals: List[dict] = []
 
         fail_count = int(meta.get(MetaKeys.tool_fail_count) or 0)
-        if self.signal_on_tool_fail and fail_count > 0:
+        if self.signal_on_tool_fail and fail_count >= self.min_tool_fail_count_for_signal:
             self._append(
                 signals,
                 "tool_message_error_pattern",

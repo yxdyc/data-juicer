@@ -76,7 +76,13 @@ OP_TYPE_DESC = {
 # >>> OP code/test paths and exclusive files/dirs
 OP_CODE_PREFIX = "data_juicer/ops/"
 OP_TEST_PREFIX = "tests/ops/"
-OP_EXCLUDE = {"__init__.py", "common", "__pycache__"}
+OP_EXCLUDE = {
+    "__init__.py",
+    "common",
+    "__pycache__",
+    # Helper module under mapper/ (not a registered OP)
+    "dialog_llm_input_utils.py",
+}
 
 FORMATTER_CODE_PREFIX = "data_juicer/format/"
 FORMATTER_TEST_PREFIX = "tests/format/"

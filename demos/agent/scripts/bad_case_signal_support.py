@@ -12,7 +12,10 @@ SIGNAL_SUPPORT_ROWS: List[Dict[str, Any]] = [
         "code": "tool_message_error_pattern",
         "role": "primary",
         "weight_hint": "high",
-        "upstream": "meta.tool_fail_count、tool_success_tagger_mapper；源自 messages 内工具返回",
+        "upstream": (
+            "meta.tool_fail_count、tool_unknown_count；tool_success_tagger_mapper（messages role=tool）；"
+            "第 9 步需 fail≥min_tool_fail_count_for_signal 才发本信号（减轻单条试错 bias）"
+        ),
     },
     {
         "code": "llm_agent_analysis_eval_low",

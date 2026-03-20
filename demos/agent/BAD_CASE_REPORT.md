@@ -12,7 +12,7 @@ bash demos/agent/scripts/run_bad_case_pipeline.sh report ./outputs/agent_quality
 
 默认在同目录生成 **`processed_bad_case_report.html`**（若只传 jsonl，输出路径可省略第二个参数）。
 
-浏览器打开该 HTML 即可：**tier 表、字段→信号归因表**、**样本钻取**（`high_precision` / `watchlist` 可展开查看 `query` / `response` / signals / insight；摘要行含 **`agent_request_id`**（或根级 `trace_id` / `id`）与 **`messages` 最后 user/assistant 的下标**）、**high/medium 分层条形图、按模型堆叠图、cohort 表**；若有第 10 步 insight，会列出若干 **high_precision 的 headline**。（**medium** 信号在页内标注为附录类启发式。）
+浏览器打开该 HTML 即可：**tier 表（中文展示名 + 机器枚举）**、**Tier 分层说明**、**字段→信号归因表**、**样本钻取**（展开含 **meta/stats 快照**、**每条 signal 对应上游字段与取值**；另有 `query` / `response` / JSON）；图含 high/medium 信号条形图、按模型堆叠图、cohort 表；若有第 10 步 insight 会列 **强怀疑档（high_precision）** 的 headline。**medium** 信号在页内标注为附录类启发式。
 
 > 钻取区 `#n` 为页内锚点，复制地址栏 `#fragment` 便于展陈与对日志。normalize 阶段会把稳定 id 与下标写入 `meta`（见 `agent_dialog_normalize_mapper`：`agent_request_id`、`agent_last_user_msg_idx`、`agent_last_assistant_msg_idx`）。
 
