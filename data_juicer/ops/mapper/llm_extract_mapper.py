@@ -166,5 +166,12 @@ class LLMExtractMapper(Mapper):
             for k, v in extracted.items():
                 sample[Fields.meta][k] = v
         if usage is not None:
-            sample[Fields.meta][MetaKeys.llm_semantic_usage] = usage.to_dict()
+            prev_usage = sample[Fields.meta].get(MetaKeys.llm_semantic_usage, {})
+            curr_usage = usage.to_dict()
+            sample[Fields.meta][MetaKeys.llm_semantic_usage] = {
+                "prompt_tokens": prev_usage.get("prompt_tokens", 0) + curr_usage.get("prompt_tokens", 0),
+                "completion_tokens": prev_usage.get("completion_tokens", 0) + curr_usage.get("completion_tokens", 0),
+                "total_tokens": prev_usage.get("total_tokens", 0) + curr_usage.get("total_tokens", 0),
+                "cost_estimate": prev_usage.get("cost_estimate", 0) + curr_usage.get("cost_estimate", 0),
+            }
         return sample
