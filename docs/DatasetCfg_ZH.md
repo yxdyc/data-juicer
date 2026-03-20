@@ -106,6 +106,22 @@ validators:
       language: "str"
 ```
 
+### JSON / JSONL 加载报错 ``Value is too big!``
+
+本地 JSONL 由 HuggingFace ``datasets`` 解析时可能走 ``ujson``；若某条样本里含有 **超出 ujson 表示范围的整数**（例如极长的数字型 ID），会报错 ``ValueError: Value is too big!``。这与单行文本长短无关，多半是 **数字字段** 问题。
+
+**处理方式：**
+
+1. **推荐（无需改数据）**：在运行前设置环境变量，让解析改走 CPython 标准库 ``json``：
+
+   ```bash
+   DATA_JUICER_USE_STDLIB_JSON=1 dj-process --config path/to/config.yaml
+   ```
+
+2. **从源头规避**：把易超大的字段导出为 **字符串**（JSON 里加引号），再生成 JSONL。
+
+3. **换一种格式**：例如改为 Parquet，由 Arrow 读入，不经过该 JSON 路径。
+
 ### 旧版 dataset_path 配置
 
 `dataset_path` 配置是指定数据集路径的历史版本方式。它简单易用，但缺乏灵活性。它可以在 yaml 或命令行输入中使用。一些示例：

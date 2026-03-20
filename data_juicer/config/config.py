@@ -112,6 +112,13 @@ def init_configs(args: Optional[List[str]] = None, which_entry: object = None, l
         setting up logger.
     :return: a global cfg object used by the DefaultExecutor or Analyzer
     """
+    # Optional: stdlib json for HF datasets JSONL (avoids ujson "Value is too big!")
+    from data_juicer.utils.datasets_json_compat import (
+        apply_stdlib_json_patch_for_datasets,
+    )
+
+    apply_stdlib_json_patch_for_datasets()
+
     if args is None:
         args = sys.argv[1:]
     with timing_context("Total config initialization time"):
