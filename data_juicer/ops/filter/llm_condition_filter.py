@@ -110,8 +110,6 @@ class LLMConditionFilter(Filter):
         return None
 
     def compute_stats_single(self, sample: dict, rank: Optional[int] = None, context: bool = False):
-        if StatsKeys.llm_condition_filter_result in sample.get(Fields.stats, {}):
-            return sample
         if Fields.stats not in sample:
             sample[Fields.stats] = {}
         text = self._text(sample)
@@ -146,7 +144,14 @@ class LLMConditionFilter(Filter):
                 logger.warning("LLMConditionFilter attempt failed: %s", e)
         sample[Fields.stats][StatsKeys.llm_condition_filter_result] = result
         if usage is not None:
-            sample[Fields.stats][StatsKeys.llm_semantic_usage] = usage.to_dict()
+            prev_usage = sample[Fields.stats].get(StatsKeys.llm_semantic_usage, {})
+            curr_usage = usage.to_dict()
+            sample[Fields.stats][StatsKeys.llm_semantic_usage] = {
+                "prompt_tokens": prev_usage.get("prompt_tokens", 0) + curr_usage.get("prompt_tokens", 0),
+                "completion_tokens": prev_usage.get("completion_tokens", 0) + curr_usage.get("completion_tokens", 0),
+                "total_tokens": prev_usage.get("total_tokens", 0) + curr_usage.get("total_tokens", 0),
+                "cost_estimate": prev_usage.get("cost_estimate", 0) + curr_usage.get("cost_estimate", 0),
+            }
         return sample
 
     def process_single(self, sample: dict, rank: Optional[int] = None) -> bool:
