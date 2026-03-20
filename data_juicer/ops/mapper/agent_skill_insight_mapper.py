@@ -76,6 +76,8 @@ class AgentSkillInsightMapper(Mapper):
             tools = [tools] if tools else []
         if not isinstance(skills, list):
             skills = [skills] if skills else []
+        tools = [str(t).strip() for t in tools if str(t).strip()]
+        skills = [str(s).strip() for s in skills if str(s).strip()]
 
         if not tools and not skills:
             meta[self.insights_key] = []

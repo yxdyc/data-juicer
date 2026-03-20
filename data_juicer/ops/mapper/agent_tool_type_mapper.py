@@ -39,6 +39,7 @@ class AgentToolTypeMapper(Mapper):
         tool_list = meta.get(self.tool_types_meta_key)
         if not isinstance(tool_list, list):
             tool_list = []
+        tool_list = [str(t).strip() for t in tool_list if str(t).strip()]
 
         if not tool_list:
             meta[self.primary_key] = None

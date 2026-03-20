@@ -47,6 +47,7 @@ usage() {
   PYTHON   python 可执行文件（默认 python3）
   SMOKE_OUT / FULL_OUT / CAL_OUT  输出路径覆盖
   SKIP_AUTO_REPORT=1  smoke/full 末尾不自动生成 HTML
+  BAD_CASE_REPORT_LLM=1  report 子命令生成 HTML 时加 --llm-summary（需 DASHSCOPE_API_KEY 或 OPENAI_API_KEY）
 
 日常只看结论: demos/agent/BAD_CASE_REPORT.md
 详见: demos/agent/BAD_CASE_INSIGHTS.md 与 demos/agent/scripts/README.md
@@ -66,8 +67,11 @@ run_report() {
   echo "==> verify_bad_case_export.py"
   "$PY" demos/agent/scripts/verify_bad_case_export.py --input "$input"
   echo "==> generate_bad_case_report.py -> $out"
-  "$PY" demos/agent/scripts/generate_bad_case_report.py \
-    --input "$input" --output "$out"
+  # Avoid "${arr[@]}" on an empty array under `set -u` (some bash versions error).
+  local -a _rep_args
+  _rep_args=(--input "$input" --output "$out")
+  _rep_args+=(--llm-summary)
+  "$PY" demos/agent/scripts/generate_bad_case_report.py "${_rep_args[@]}"
   echo "Open in browser: $out"
 }
 

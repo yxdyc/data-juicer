@@ -5,6 +5,7 @@
 
 from data_juicer.ops.mapper.agent_dialog_normalize_mapper import (
     AgentDialogNormalizeMapper,
+    _list_str_for_hf_meta,
     _messages_to_history,
 )
 from data_juicer.utils.constant import Fields, MetaKeys
@@ -82,3 +83,23 @@ def test_process_single_sets_meta_when_history_compressed():
     assert out[Fields.meta][MetaKeys.agent_dialog_history_compressed] is True
     rsp = out["response"]
     assert "omitted from middle" in rsp or "truncated" in rsp
+
+
+def test_list_str_for_hf_meta_empty_uses_string_placeholder():
+    assert _list_str_for_hf_meta([]) == [""]
+    assert _list_str_for_hf_meta(["", None, "  "]) == [""]
+    assert _list_str_for_hf_meta(["a", "b"]) == ["a", "b"]
+
+
+def test_process_single_always_sets_dialog_history_compressed_bool():
+    op = AgentDialogNormalizeMapper(
+        text_key="text",
+        history_key="dialog_history",
+        query_key="query",
+        response_key="response",
+    )
+    sample = {"id": "1", "messages": [{"role": "user", "content": "hi"}]}
+    out = op.process_single(sample)
+    assert out[Fields.meta][MetaKeys.agent_dialog_history_compressed] is False
+    assert out[Fields.meta][MetaKeys.agent_tool_types] == [""]
+    assert out[Fields.meta][MetaKeys.agent_skill_types] == [""]

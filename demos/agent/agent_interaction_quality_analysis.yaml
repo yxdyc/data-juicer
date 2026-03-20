@@ -9,11 +9,11 @@
 # 顶层仅使用 config 支持的键（参考 demos/process_simple/process.yaml、config_all.yaml）
 # 原始 agent 数据无 text，formatter 用 text_keys 校验；第一个 op 会写出 text
 project_name: agent-interaction-quality
-dataset_path: demos/local/demo-agent-data-content.jsonl
-# dataset_path: demos/local/sample_100.jsonl
+# dataset_path: demos/local/demo-agent-data-content.jsonl
+dataset_path: demos/local/sample_100.jsonl
 np: 16
-export_path: ./outputs/agent_quality_sampled_5/processed.jsonl
-# export_path: ./outputs/agent_quality_sampled_100/processed.jsonl
+# export_path: ./outputs/agent_quality_sampled_5/processed.jsonl
+export_path: ./outputs/agent_quality_sampled_100/processed.jsonl
 # 保留 meta/stats 在主 jsonl，便于 jq 与 scripts 分析；仍会额外生成 processed_stats.jsonl
 keep_stats_in_res_ds: true
 use_checkpoint: true

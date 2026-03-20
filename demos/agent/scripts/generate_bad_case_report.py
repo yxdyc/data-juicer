@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
-"""HTML report: bad-case tiers, signals, cohort table, embedded charts.
+"""HTML 报告：分档统计、信号图、队列表、典型样例（可展开）、可选 LLM 页首导读。
 
-Merges ``*_stats.jsonl`` with ``processed.jsonl`` when needed.
+- 图表使用中文字体配置，避免中文显示为方框。
+- 典型样例默认页内最多 50 条，全量写入同目录 ``*_drilldown_full.jsonl``。
+- ``--llm-summary``：调用 OpenAI 兼容接口（默认读 ``DASHSCOPE_API_KEY`` / ``OPENAI_API_KEY``）。
 
-Example:
+示例::
+
   python demos/agent/scripts/generate_bad_case_report.py \\
     --input ./outputs/agent_quality/processed.jsonl \\
-    --output ./outputs/agent_quality/bad_case_report.html
+    --output ./outputs/agent_quality/bad_case_report.html \\
+    --llm-summary
 """
 
 from __future__ import annotations
@@ -16,7 +20,10 @@ import base64
 import html
 import io
 import json
+import os
 import sys
+import urllib.error
+import urllib.request
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -166,6 +173,30 @@ def _global_evidence_snapshot_html(row: dict) -> str:
     )
 
 
+def _configure_matplotlib_cjk(plt_mod) -> None:
+    """Avoid CJK in chart titles/labels rendering as tofu (□) in embedded PNGs."""
+    plt_mod.rcParams.update(
+        {
+            "font.sans-serif": [
+                "PingFang SC",
+                "Hiragino Sans GB",
+                "Heiti SC",
+                "Songti SC",
+                "STHeiti",
+                "Microsoft YaHei",
+                "SimHei",
+                "Noto Sans CJK SC",
+                "Noto Sans CJK JP",
+                "Source Han Sans SC",
+                "WenQuanYi Zen Hei",
+                "Arial Unicode MS",
+                "DejaVu Sans",
+            ],
+            "axes.unicode_minus": False,
+        }
+    )
+
+
 def _get_plt():
     try:
         import matplotlib
@@ -173,6 +204,7 @@ def _get_plt():
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
 
+        _configure_matplotlib_cjk(plt)
         return plt
     except ImportError:  # pragma: no cover
         return None
@@ -224,7 +256,7 @@ def _attribution_table_html() -> str:
             "</tr>"
         )
     thead = (
-        "<thead><tr><th>signal code</th><th>角色</th><th>典型权重</th>"
+        "<thead><tr><th>信号代码</th><th>证据角色</th><th>典型权重</th>"
         "<th>上游字段与算子</th></tr></thead>"
     )
     return f"<table>{thead}<tbody>{''.join(parts)}</tbody></table>"
@@ -247,8 +279,8 @@ def _json_pretty(obj: object) -> str:
         return str(obj)
 
 
-def _collect_drilldown(rows: List[dict], limit: int) -> List[dict]:
-    """Bad-case rows (high_precision, watchlist) with stable ids for the report UI."""
+def _iter_bad_case_drill_rows(rows: List[dict]):
+    """Yield rows in tier order: high_precision first, then watchlist (stable by row index)."""
     tier_rank = {"high_precision": 0, "watchlist": 1}
     scored: List[Tuple[int, int, dict]] = []
     for i, row in enumerate(rows):
@@ -258,54 +290,77 @@ def _collect_drilldown(rows: List[dict], limit: int) -> List[dict]:
             continue
         scored.append((tier_rank[tier], i, row))
     scored.sort(key=lambda x: (x[0], x[1]))
+    for _tr, _i, row in scored:
+        yield row
+
+
+def _row_to_drill_entry(row: dict) -> dict:
+    meta = get_dj_meta(row)
+    tier = str(meta.get("agent_bad_case_tier", ""))
+    rid = (
+        meta.get("agent_request_id")
+        or row.get("request_id")
+        or row.get("trace_id")
+        or row.get("id")
+    )
+    rid_s = str(rid).strip() if rid is not None else ""
+    u_idx = meta.get("agent_last_user_msg_idx")
+    a_idx = meta.get("agent_last_assistant_msg_idx")
+    signals = meta.get("agent_bad_case_signals") or []
+    insight = meta.get("agent_insight_llm") or {}
+    meta_subset = {
+        k: meta[k]
+        for k in (
+            "agent_request_id",
+            "agent_last_user_msg_idx",
+            "agent_last_assistant_msg_idx",
+            "agent_request_model",
+            "agent_pt",
+            "agent_bad_case_tier",
+            "agent_turn_count",
+            "agent_total_cost_time_ms",
+        )
+        if k in meta
+    }
+    return {
+        "tier": tier,
+        "tier_label_zh": _tier_zh(tier),
+        "request_id": rid_s,
+        "u_idx": u_idx,
+        "a_idx": a_idx,
+        "model": str(meta.get("agent_request_model") or ""),
+        "pt": str(meta.get("agent_pt") or ""),
+        "query": row.get("query") or "",
+        "response": row.get("response") or "",
+        "signals_json": _json_pretty(signals),
+        "insight_json": _json_pretty(insight),
+        "meta_json": _json_pretty(meta_subset),
+        "evidence_snapshot_html": _global_evidence_snapshot_html(row),
+        "signal_evidence_html": _signal_evidence_tables_html(signals, row),
+    }
+
+
+def _collect_drilldown(rows: List[dict], limit: Optional[int]) -> List[dict]:
+    """Bad-case rows (high_precision, watchlist) for the report UI; ``limit`` None = all."""
     out: List[dict] = []
-    for _tr, _orig_i, row in scored[:limit]:
-        meta = get_dj_meta(row)
-        tier = str(meta.get("agent_bad_case_tier", ""))
-        rid = (
-            meta.get("agent_request_id")
-            or row.get("request_id")
-            or row.get("trace_id")
-            or row.get("id")
-        )
-        rid_s = str(rid).strip() if rid is not None else ""
-        u_idx = meta.get("agent_last_user_msg_idx")
-        a_idx = meta.get("agent_last_assistant_msg_idx")
-        signals = meta.get("agent_bad_case_signals") or []
-        insight = meta.get("agent_insight_llm") or {}
-        meta_subset = {
-            k: meta[k]
-            for k in (
-                "agent_request_id",
-                "agent_last_user_msg_idx",
-                "agent_last_assistant_msg_idx",
-                "agent_request_model",
-                "agent_pt",
-                "agent_bad_case_tier",
-                "agent_turn_count",
-                "agent_total_cost_time_ms",
-            )
-            if k in meta
-        }
-        out.append(
-            {
-                "tier": tier,
-                "tier_label_zh": _tier_zh(tier),
-                "request_id": rid_s,
-                "u_idx": u_idx,
-                "a_idx": a_idx,
-                "model": str(meta.get("agent_request_model") or ""),
-                "pt": str(meta.get("agent_pt") or ""),
-                "query": row.get("query") or "",
-                "response": row.get("response") or "",
-                "signals_json": _json_pretty(signals),
-                "insight_json": _json_pretty(insight),
-                "meta_json": _json_pretty(meta_subset),
-                "evidence_snapshot_html": _global_evidence_snapshot_html(row),
-                "signal_evidence_html": _signal_evidence_tables_html(signals, row),
-            }
-        )
+    for row in _iter_bad_case_drill_rows(rows):
+        out.append(_row_to_drill_entry(row))
+        if limit is not None and len(out) >= limit:
+            break
     return out
+
+
+def _drill_export_payload(d: dict) -> dict:
+    """JSONL-friendly row (drop pre-rendered HTML)."""
+    skip = frozenset({"evidence_snapshot_html", "signal_evidence_html"})
+    return {k: v for k, v in d.items() if k not in skip}
+
+
+def _write_drilldown_jsonl(path: Path, entries: List[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        for d in entries:
+            f.write(json.dumps(_drill_export_payload(d), ensure_ascii=False, default=str) + "\n")
 
 
 def _idx_badge(u_idx: object, a_idx: object) -> str:
@@ -317,12 +372,38 @@ def _idx_badge(u_idx: object, a_idx: object) -> str:
     return " · ".join(parts) if parts else "—"
 
 
-def _drilldown_section_html(drill: List[dict]) -> str:
-    if not drill:
+def _drilldown_section_html(
+    drill: List[dict],
+    *,
+    total_count: int,
+    export_rel: Optional[str] = None,
+) -> str:
+    """典型案例清单：页内仅展示前几条，全量可另存 jsonl。"""
+    title = "典型案例（强怀疑 / 待观察，可展开详情）"
+    if not drill and total_count == 0:
         return (
-            "<h2>样本钻取（强怀疑 / 待观察）</h2>"
-            "<p class='note'>本批无 <code>high_precision</code> / "
-            "<code>watchlist</code> 样本，或已将钻取条数上限设为 0。</p>"
+            f"<h2 id='sec-cases'>{html.escape(title)}</h2>"
+            "<p class='note'>本批没有 <code>high_precision</code>（强怀疑）或 "
+            "<code>watchlist</code>（待观察）命中样本；或已在命令行关闭本段。</p>"
+        )
+    shown = len(drill)
+    extra_note = ""
+    if total_count > shown:
+        extra_note = (
+            f"<p class='note'><strong>页内展示 {shown} 条</strong>（按分档优先级排序），"
+            f"本批同条件共 <strong>{total_count}</strong> 条。"
+        )
+        if export_rel:
+            extra_note += (
+                f" 全量请下载/用脚本打开："
+                f"<a href='{html.escape(export_rel)}'><code>{html.escape(export_rel)}</code></a> "
+                f"（JSON Lines，一行一例，便于 jq / pandas）。"
+            )
+        extra_note += "</p>"
+    elif export_rel and total_count > 0:
+        extra_note = (
+            f"<p class='note'>本批共 <strong>{total_count}</strong> 条，已同时写入 "
+            f"<a href='{html.escape(export_rel)}'><code>{html.escape(export_rel)}</code></a>。</p>"
         )
     cards = []
     for i, d in enumerate(drill):
@@ -365,35 +446,236 @@ def _drilldown_section_html(drill: List[dict]) -> str:
             f"<pre class=\"drill-pre\">{html.escape(d['meta_json'])}</pre></section>"
             "</div></div></div>"
         )
+    intro = (
+        "<p class='note'>每条卡片对应一条导出样本：徽标为<strong>中文分档</strong>，"
+        "旁边 <code>high_precision</code> / <code>watchlist</code> 为 JSON 中的枚举值。"
+        "点击「展开字段」可查看 <strong>meta/stats 快照</strong>、各 signal 的<strong>上游证据字段</strong>，"
+        "以及 <code>query</code> / <code>response</code> 全文。<code>#编号</code> 为页内锚点，便于复制链接。</p>"
+    )
     block = (
-        "<h2>样本钻取（强怀疑 / 待观察）</h2>"
-        "<p class='note'>卡片标签为<strong>中文分档</strong>；旁注 <code>high_precision</code> / "
-        "<code>watchlist</code> 为导出中的机器枚举。展开后可见 <strong>meta/stats 快照</strong>、"
-        "每条 signal 对应的<strong>上游字段与当前取值</strong>，再对照 <code>query/response</code>。"
-        "<code>#n</code> 为页内锚点。</p>"
+        f"<h2 id='sec-cases'>{html.escape(title)}</h2>"
+        f"{extra_note}{intro}"
         '<div class="drill-list">'
         f"{''.join(cards)}</div>"
     )
     return block
 
 
-def _insight_samples(
-    rows: List[dict],
-    tier: str,
-    limit: int,
-) -> List[Tuple[str, str]]:
-    out: List[Tuple[str, str]] = []
+def _build_llm_digest_compact(
+    n_rows: int,
+    tier_cnt: Counter,
+    high_c: Counter,
+    med_c: Counter,
+    cohort_rows: List[dict],
+) -> str:
+    """Minimal text for page-top LLM (shorter latency / tokens)."""
+    hp = int(tier_cnt.get("high_precision", 0))
+    wl = int(tier_cnt.get("watchlist", 0))
+    nn = int(tier_cnt.get("none", 0))
+    lines = [
+        f"n={n_rows} high_precision={hp} watchlist={wl} none={nn}",
+    ]
+    if high_c:
+        top_h = high_c.most_common(8)
+        lines.append("high_signals: " + ", ".join(f"{c}:{n}" for c, n in top_h))
+    if med_c:
+        top_m = med_c.most_common(4)
+        lines.append("med_signals: " + ", ".join(f"{c}:{n}" for c, n in top_m))
+    ranked = sorted(
+        [r for r in cohort_rows if int(r.get("count") or 0) > 0],
+        key=lambda r: -int(r.get("count") or 0),
+    )[:6]
+    if ranked:
+        bits = []
+        for r in ranked:
+            sig = str(r.get("top_signal_codes") or "")
+            if len(sig) > 42:
+                sig = sig[:42] + "…"
+            bits.append(
+                f"{r.get('agent_request_model', '')}|pt={r.get('agent_pt', '')}|"
+                f"{r.get('tier', '')}|n={r.get('count')}|{sig}"
+            )
+        lines.append("top_cohorts: " + " / ".join(bits))
+    return "\n".join(lines)
+
+
+def _rule_based_exec_summary(
+    n_rows: int,
+    tier_cnt: Counter,
+    high_c: Counter,
+    med_c: Counter,
+) -> str:
+    hp = int(tier_cnt.get("high_precision", 0))
+    wl = int(tier_cnt.get("watchlist", 0))
+    nn = int(tier_cnt.get("none", 0))
+    lines = [
+        "【结论摘要】",
+        f"- 本批合计 {n_rows} 条；其中强怀疑（主证据）{hp} 条、待观察（弱证据）{wl} 条、未标记 {nn} 条。",
+    ]
+    if high_c:
+        bits = [f"{c}（{n} 次）" for c, n in high_c.most_common(5)]
+        lines.append("- high 权重信号出现较多的有：" + "；".join(bits) + "。")
+    lines.extend(
+        [
+            "",
+            "【后续分析建议】",
+            "- 结合下方「按模型堆叠图」与 cohort 表，看强怀疑是否集中在少数模型或日期桶。",
+            "- 对 high 权重信号做共现统计，避免单条启发式误杀。",
+            "- 强怀疑档建议优先人工复核；待观察档宜抽样或与业务规则对照。",
+            "",
+            "【阅读提示】",
+            "- 「强怀疑」多为结构化主证据；「待观察」多为弱信号组合，请勿混读。",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _fetch_exec_summary_llm(
+    digest: str,
+    *,
+    model: str,
+    api_key: str,
+    api_base: str,
+    timeout_sec: int = 60,
+) -> Optional[str]:
+    """OpenAI-compatible ``/v1/chat/completions`` (DashScope 兼容模式、OpenAI 等)."""
+    url = api_base.rstrip("/") + "/chat/completions"
+    system = (
+        "你是数据分析顾问。只根据用户给的若干行批次汇总写报告页首短导读；"
+        "禁止编造未出现的数字、档位名或信号 code；表述简练。"
+    )
+    user = (
+        "以下为同一批次的极简汇总（非逐条日志）。请用纯中文、纯文本 output，分三块，块间空一行：\n"
+        "【结论摘要】3～5行，每行以「- 」，基于 n= / high_precision= / high_signals。\n"
+        "【后续分析建议】2～4行，每行「- 」，可执行即可。\n"
+        "【阅读提示】1～2行，区分强怀疑(high_precision)与待观察(watchlist)。\n\n"
+        f"{digest}"
+    )
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        "temperature": 0.2,
+        "max_tokens": 768,
+    }
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=data,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError, OSError) as e:
+        print(f"WARNING: LLM 导读请求失败: {e}", file=sys.stderr)
+        return None
+    try:
+        return str(body["choices"][0]["message"]["content"]).strip()
+    except (KeyError, IndexError, TypeError):
+        print(f"WARNING: LLM 导读返回格式异常: {str(body)[:800]}", file=sys.stderr)
+        return None
+
+
+def _exec_summary_section_html(body_text: str, source_note: str) -> str:
+    return (
+        "<section class='exec-summary' id='sec-guide'>"
+        "<h2>报告导读（结论与后续分析）</h2>"
+        f"<p class='note'>{html.escape(source_note)}</p>"
+        f"<pre class='exec-summary-pre'>{html.escape(body_text)}</pre>"
+        "</section>"
+    )
+
+
+def _insight_section_rich_html(rows: List[dict], tier: str, limit: int) -> str:
+    """较完整的单条 insight 卡片（来自 agent_insight_llm）。"""
+    tier_zh = _tier_zh(tier)
+    cards: List[str] = []
+    n = 0
     for row in rows:
-        if len(out) >= limit:
+        if n >= limit:
             break
         meta = get_dj_meta(row)
         if str(meta.get("agent_bad_case_tier", "")) != tier:
             continue
         ins = meta.get("agent_insight_llm") or {}
         hl = (ins.get("headline") or "").strip()
-        if hl:
-            out.append((hl, str(meta.get("agent_request_model", ""))))
-    return out
+        if not hl:
+            continue
+        n += 1
+        rid = str(
+            meta.get("agent_request_id") or row.get("request_id") or row.get("trace_id") or row.get("id") or ""
+        ).strip()
+        model = str(meta.get("agent_request_model") or "")
+        pr = (ins.get("human_review_priority") or "").strip()
+        align = (ins.get("narrative_alignment") or "").strip()
+        audit = (ins.get("audit_notes") or "").strip()
+        facets = ins.get("viz_facets") or []
+        if not isinstance(facets, list):
+            facets = [str(facets)]
+        facets_s = "、".join(str(x) for x in facets[:12] if x)
+        causes = ins.get("root_causes") or []
+        cause_lis = []
+        if isinstance(causes, list):
+            for c in causes[:5]:
+                if not isinstance(c, dict):
+                    cause_lis.append(f"<li>{html.escape(str(c))}</li>")
+                    continue
+                factor = html.escape(str(c.get("factor") or ""))
+                conf = html.escape(str(c.get("confidence") or ""))
+                r1 = html.escape(str(c.get("rationale_one_line") or "")[:280])
+                cited = c.get("cited_fields") or []
+                if not isinstance(cited, list):
+                    cited = [str(cited)]
+                cf = html.escape(", ".join(str(x) for x in cited[:8]))
+                cite_html = f' <span class="cite">依据字段: {cf}</span>' if cf else ""
+                cause_lis.append(
+                    f"<li><strong>{factor}</strong>（置信 {conf}）— {r1}{cite_html}</li>"
+                )
+        causes_html = "<ul class='causes'>" + "".join(cause_lis) + "</ul>" if cause_lis else ""
+        meta_line = (
+            f"<span class='ins-meta'><code>{html.escape(rid or '—')}</code> · "
+            f"{html.escape(model or '—')}</span>"
+        )
+        badges = []
+        if pr:
+            badges.append(f"<span class='ins-badge pr'>{html.escape(pr)}</span>")
+        if align:
+            badges.append(f"<span class='ins-badge al'>{html.escape(align)}</span>")
+        badge_html = " ".join(badges)
+        audit_html = (
+            f"<p class='ins-audit'>{html.escape(audit)}</p>" if audit else ""
+        )
+        facets_html = (
+            f"<p class='ins-facets'><strong>建议制图维度</strong>：{html.escape(facets_s)}</p>"
+            if facets_s
+            else ""
+        )
+        cards.append(
+            "<div class='insight-card'>"
+            f"<div class='insight-h'>{html.escape(hl)} {badge_html}</div>"
+            f"{meta_line}"
+            f"{causes_html}{facets_html}{audit_html}"
+            "</div>"
+        )
+    if not cards:
+        return (
+            f"<section class='insight-sec' id='sec-insights'><h2>单条 Insight 摘录（{html.escape(tier_zh)}）</h2>"
+            "<p class='note'>本档下暂无带 <code>headline</code> 的 "
+            "<code>meta.agent_insight_llm</code>（可能未跑 insight 算子，或解析失败）。</p></section>"
+        )
+    return (
+        f"<section class='insight-sec' id='sec-insights'><h2>单条 Insight 摘录（{html.escape(tier_zh)}）</h2>"
+        "<p class='note'>来自 <code>agent_insight_llm_mapper</code>：摘要句、复核优先级、"
+        "成因与建议制图维度；可与上文图表对照，下文「典型样例」支持逐条展开互证。</p>"
+        f"<div class='insight-list'>{''.join(cards)}</div></section>"
+    )
 
 
 def _chart_tier_bar(tier_cnt: Counter, plt_mod) -> Optional[str]:
@@ -411,13 +693,17 @@ def _chart_tier_bar(tier_cnt: Counter, plt_mod) -> Optional[str]:
         "watchlist": "#f39c12",
         "none": "#95a5a6",
     }
-    ax.bar(
+    bars = ax.bar(
         labels_zh,
         vals,
         color=[colors.get(x, "#3498db") for x in labels],
     )
-    ax.set_title("Bad-case 分档计数（中文为展示名，括号为导出枚举）")
-    ax.set_ylabel("Samples")
+    try:
+        ax.bar_label(bars, labels=[str(int(v)) for v in vals], padding=3, fontsize=10)
+    except AttributeError:  # matplotlib < 3.4
+        pass
+    ax.set_title("分档样本数（柱顶数字为条数；中文为展示名）")
+    ax.set_ylabel("条数")
     plt_mod.setp(ax.xaxis.get_majorticklabels(), rotation=12, ha="center")
     fig.tight_layout()
     return _fig_to_data_uri(fig, plt_mod)
@@ -436,9 +722,15 @@ def _chart_signals(
     labels = [x[0] for x in items]
     vals = [x[1] for x in items]
     fig, ax = plt_mod.subplots(figsize=(7, max(2.5, 0.35 * len(labels))))
-    ax.barh(labels[::-1], vals[::-1], color=color)
+    labels_r = labels[::-1]
+    vals_r = vals[::-1]
+    bars = ax.barh(labels_r, vals_r, color=color)
+    try:
+        ax.bar_label(bars, labels=[str(int(v)) for v in vals_r], padding=3, fontsize=9)
+    except AttributeError:
+        pass
     ax.set_title(title)
-    ax.set_xlabel("Count")
+    ax.set_xlabel("条数")
     fig.tight_layout()
     return _fig_to_data_uri(fig, plt_mod)
 
@@ -449,17 +741,35 @@ def _chart_by_model(model_tier: Dict[str, Counter], plt_mod) -> Optional[str]:
     models = sorted(model_tier.keys())
     tiers = ("high_precision", "watchlist", "none")
     fig, ax = plt_mod.subplots(figsize=(max(6, len(models) * 0.9), 3.8))
-    bottom = [0] * len(models)
+    n = len(models)
+    x = list(range(n))
+    w = 0.65
+    bottom = [0.0] * n
     colors = {"high_precision": "#c0392b", "watchlist": "#f39c12", "none": "#bdc3c7"}
     for tier in tiers:
-        vs = [model_tier[m].get(tier, 0) for m in models]
+        vs = [float(model_tier[m].get(tier, 0)) for m in models]
         if not any(vs):
             continue
         leg = f"{_tier_zh(tier)} ({tier})"
-        ax.bar(models, vs, bottom=bottom, label=leg, color=colors[tier], width=0.65)
+        ax.bar(x, vs, bottom=bottom, label=leg, color=colors[tier], width=w)
+        vmax = max(vs) if vs else 1.0
+        for i, v in enumerate(vs):
+            if v > 0:
+                yc = bottom[i] + v / 2.0
+                ax.text(
+                    x[i],
+                    yc,
+                    str(int(v)),
+                    ha="center",
+                    va="center",
+                    fontsize=9,
+                    color="white" if v >= vmax * 0.25 else "#222",
+                )
         bottom = [b + v for b, v in zip(bottom, vs)]
-    ax.set_title("按模型的分档占比（图例：中文名 + 机器枚举）")
-    ax.set_ylabel("Samples")
+    ax.set_xticks(x)
+    ax.set_xticklabels(models)
+    ax.set_title("按 request_model 堆叠分档（每段数字为该档条数）")
+    ax.set_ylabel("条数")
     ax.legend()
     plt_mod.setp(ax.xaxis.get_majorticklabels(), rotation=30, ha="right")
     fig.tight_layout()
@@ -472,13 +782,11 @@ def _html_page(
     n_rows: int,
     tier_cnt: Counter,
     cohort_rows: List[dict],
-    chart_tier: Optional[str],
-    chart_model: Optional[str],
-    chart_sig_high: Optional[str],
-    chart_sig_med: Optional[str],
     attribution_table: str,
-    samples_hp: List[Tuple[str, str]],
+    exec_summary_html: str,
+    charts_html: str,
     drilldown_html: str,
+    insight_section_html: str,
 ) -> str:
     gen_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     tier_rows = "".join(
@@ -503,49 +811,10 @@ def _html_page(
             f"<td>{html.escape(str(r.get('top_signal_codes', '')))}</td>"
             "</tr>"
         )
-    sample_block = ""
-    if samples_hp:
-        parts = []
-        for h, m in samples_hp:
-            parts.append(
-                "<li><span class='model'>"
-                f"{html.escape(m)}</span> — {html.escape(h)}</li>"
-            )
-        lis = "".join(parts)
-        sample_block = (
-            "<h2>Insight 摘录（强怀疑档 / high_precision）</h2><ul>"
-            f"{lis}</ul>"
-        )
-
-    charts = []
-    if chart_tier:
-        charts.append(
-            "<h2>Tier overview</h2>"
-            f"<img src='{chart_tier}' alt='tiers'/>"
-        )
-    if chart_model:
-        charts.append(
-            "<h2>By request model</h2>"
-            f"<img src='{chart_model}' alt='by model'/>"
-        )
-    if chart_sig_high:
-        charts.append(
-            "<h3>本批次 high 权重信号</h3>"
-            f"<img src='{chart_sig_high}' alt='signals high'/>"
-        )
-    if chart_sig_med:
-        charts.append(
-            "<h3>附录：medium 启发式信号</h3>"
-            "<p class='note'>多为单条弱证据；tier 需与其它信号组合才可能进 watchlist。</p>"
-            f"<img src='{chart_sig_med}' alt='signals medium'/>"
-        )
-    if charts:
-        charts_html = "\n".join(charts)
-    else:
-        charts_html = "<p>(Charts skipped — no matplotlib)</p>"
 
     css = (
-        "body{font-family:system-ui,sans-serif;margin:24px;max-width:1100px;}"
+        "body{font-family:'PingFang SC','Hiragino Sans GB','Microsoft YaHei',"
+        "'Noto Sans SC',system-ui,sans-serif;margin:24px;max-width:1100px;}"
         "h1{font-size:1.35rem;}.meta{color:#555;font-size:0.9rem;}"
         "table{border-collapse:collapse;width:100%;margin:1rem 0;font-size:0.9rem;}"
         "th,td{border:1px solid #ccc;padding:6px 8px;text-align:left;}"
@@ -590,24 +859,50 @@ def _html_page(
         ".sig-evidence .det{color:#666;font-size:0.8rem;margin-left:6px;}"
         ".snap table.inner{margin-top:4px;}"
         "h4.ev-h{margin:12px 0 6px;font-size:0.95rem;}"
+        ".exec-summary-pre{margin:0.5rem 0 0;white-space:pre-wrap;word-break:"
+        "break-word;line-height:1.55;font-size:0.92rem;background:#f7f9fc;border:1px solid #e2e8f0;"
+        "border-radius:8px;padding:14px 16px;}"
+        ".insight-list{display:flex;flex-direction:column;gap:12px;margin:1rem 0;}"
+        ".insight-card{border:1px solid #e0e0e0;border-radius:8px;padding:12px 14px;"
+        "background:#fff;box-shadow:0 1px 2px rgba(0,0,0,0.04);}"
+        ".insight-h{font-weight:600;font-size:1rem;margin-bottom:6px;line-height:1.4;}"
+        ".ins-meta{display:block;font-size:0.85rem;color:#555;margin-bottom:8px;}"
+        ".ins-badge{font-size:0.75rem;padding:2px 8px;border-radius:6px;margin-left:6px;}"
+        ".ins-badge.pr{background:#fce4ec;color:#880e4f;}"
+        ".ins-badge.al{background:#e3f2fd;color:#0d47a1;}"
+        "ul.causes{margin:6px 0 0 1rem;padding:0;font-size:0.88rem;line-height:1.45;}"
+        "ul.causes li{margin:4px 0;}"
+        ".cite{color:#666;font-size:0.82rem;}"
+        ".ins-facets,.ins-audit{font-size:0.86rem;margin:8px 0 0;color:#444;}"
+        "section.insight-sec{margin-top:2rem;}"
     )
     thead = (
-        "<thead><tr><th>agent_request_model</th><th>agent_pt</th>"
-        "<th>tier（中文 / 枚举）</th><th>count</th><th>top_signal_codes</th></tr></thead>"
+        "<thead><tr><th>请求模型</th><th>日期桶 (pt)</th>"
+        "<th>分档（中文 / 枚举）</th><th>条数</th><th>常见信号代码</th></tr></thead>"
     )
     tier_legend = (
-        "<h2>Tier 分层怎么读</h2>"
+        "<h2 id='sec-tiers'>如何理解「分档」</h2>"
         "<ul class='tier-legend'>"
-        "<li><strong>强怀疑（主证据）</strong> — 机器值 <code>high_precision</code>："
-        "建议优先人工复核（多为 LLM eval 主证据）。"
-        "若菜谱设 <code>high_precision_on_tool_fail_alone: true</code>，"
-        "仅凭 tool 正则命中多次失败也可进此档。</li>"
+        "<li><strong>强怀疑（主证据）</strong> — JSON 中机器值为 <code>high_precision</code>："
+        "通常对应较强的结构化证据（如多项 LLM 评估偏低）。"
+        "若菜谱里打开 <code>high_precision_on_tool_fail_alone</code>，"
+        "也可能仅凭多次 tool 失败模式进入此档，解读时请结合业务。</li>"
         "<li><strong>待观察（弱证据）</strong> — <code>watchlist</code>："
-        "启发式或单一弱证据，不宜直接等同「坏样本」。</li>"
-        "<li><strong>未标记</strong> — <code>none</code>：未命中分层规则。</li>"
+        "多为启发式或单一弱信号，<strong>不宜</strong>直接等同「劣质样本」，适合抽样核对。</li>"
+        "<li><strong>未标记</strong> — <code>none</code>：未命中当前分层规则。</li>"
         "</ul>"
-        "<p class='note'><code>high_precision</code> 在此项目中表示 "
-        "「强怀疑需复核」而非「模型高精度」；jq / JSON 仍用英文枚举。</p>"
+        "<p class='note'>提示：<code>high_precision</code> 在本项目语义为「值得优先复核」，"
+        "与「模型高精度」无关；命令行 / JSON 仍保留英文枚举，便于脚本处理。</p>"
+    )
+    nav = (
+        "<p class='note'><strong>快速跳转：</strong> "
+        "<a href='#sec-guide'>导读</a> · "
+        "<a href='#sec-tiers'>分档说明</a> · "
+        "<a href='#sec-charts'>图表</a> · "
+        "<a href='#sec-insights'>Insight</a> · "
+        "<a href='#sec-cases'>典型样例</a> · "
+        "<a href='#sec-attrib'>归因表</a> · "
+        "<a href='#sec-cohort'>队列明细</a></p>"
     )
     adv = (
         "<p>进阶说明见 <code>demos/agent/BAD_CASE_INSIGHTS.md</code>、"
@@ -624,26 +919,28 @@ def _html_page(
 </head><body>
 <h1>{html.escape(title)}</h1>
 <div class="meta">
-  Generated {html.escape(gen_at)} ·
-  Input: <code>{html.escape(input_path)}</code><br/>
-  Rows: <strong>{n_rows}</strong>
+  生成时间 {html.escape(gen_at)} ·
+  数据文件 <code>{html.escape(input_path)}</code><br/>
+  本报告载入 <strong>{n_rows}</strong> 条样本（若使用 --limit 则仅为其子集）
 </div>
-<h2>Tier counts</h2>
+{nav}
+{exec_summary_html}
+<h2 id='sec-counts'>各分档条数</h2>
 <table><thead><tr><th>展示名</th><th>机器枚举</th><th>条数</th></tr></thead>
 <tbody>{tier_rows}</tbody></table>
 {tier_legend}
-<h2>Bad-case mining · 归因链</h2>
-<p>下列说明各 <code>agent_bad_case_signals[].code</code> 依赖的 <strong>meta / stats</strong> 字段
-及典型算子来源（自明支撑 bad case mining）。下方<strong>样本钻取</strong>中按条展示取值。</p>
-{attribution_table}
-{drilldown_html}
-<h2>Charts</h2>
+<h2 id='sec-charts'>图表（整体分布）</h2>
+<p class='note'>柱或堆叠段上的<strong>数字为该组样本数</strong>；信号图为本批内出现次数。详情可在后文 Insight 与「典型样例」中<strong>逐条展开</strong>查看。</p>
 {charts_html}
-<h2>Cohort detail (model × pt × tier)</h2>
+{insight_section_html}
+{drilldown_html}
+<h2 id='sec-attrib'>信号归因对照表</h2>
+<p class='note'>说明各信号 <code>code</code> 与上游 <strong>meta / stats</strong> 及常见算子的对应关系，便于与「典型样例」中的证据表对照。</p>
+{attribution_table}
+<h2 id='sec-cohort'>按模型 × 日期 × 分档 的队列明细</h2>
 <table>{thead}<tbody>{"".join(cohort_lines)}</tbody></table>
-{sample_block}
 <details>
-<summary>Advanced / debugging</summary>
+<summary>进阶 / 调试资源</summary>
 {adv}
 </details>
 <script>
@@ -678,7 +975,7 @@ def main() -> int:
     ap.add_argument("--output", required=True, help="Output .html path")
     ap.add_argument(
         "--title",
-        default="Agent bad-case report",
+        default="智能体交互 · Bad-case 分析报告",
         help="HTML title / H1",
     )
     ap.add_argument("--limit", type=int, default=None, help="Max rows to read")
@@ -690,14 +987,48 @@ def main() -> int:
     ap.add_argument(
         "--sample-headlines",
         type=int,
-        default=8,
-        help="Max high_precision insight headlines to list (0=off)",
+        default=10,
+        help="Max high_precision insight cards (0=off)",
     )
     ap.add_argument(
         "--drilldown-limit",
         type=int,
-        default=48,
-        help="Max high/watchlist samples with expandable field drill-down (0=skip section)",
+        default=-1,
+        help="0=关闭「典型样例」整节；>0=仅导出/保留前 N 条（截断全量清单）；默认 -1=不截断导出",
+    )
+    ap.add_argument(
+        "--drilldown-display-max",
+        type=int,
+        default=50,
+        help="HTML 内嵌展开的强怀疑/待观察样例条数上限（其余仅写入 jsonl）",
+    )
+    ap.add_argument(
+        "--no-drilldown-export",
+        action="store_true",
+        help="不写 *_drilldown_full.jsonl（仍可按 display-max 展示页内卡片）",
+    )
+    ap.add_argument(
+        "--llm-summary",
+        action="store_true",
+        help="调用 OpenAI 兼容接口生成页首导读（需环境变量 API Key）",
+    )
+    ap.add_argument(
+        "--llm-model",
+        default=os.environ.get("BAD_CASE_REPORT_LLM_MODEL", "qwen3.5-plus"),
+        help="页首导读所用模型（默认 qwen3.5-plus 或环境变量 BAD_CASE_REPORT_LLM_MODEL）",
+    )
+    ap.add_argument(
+        "--llm-api-base",
+        default=os.environ.get(
+            "OPENAI_API_BASE",
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        ),
+        help="Chat Completions base URL（需含 /v1，实际请求 .../chat/completions）",
+    )
+    ap.add_argument(
+        "--llm-api-key",
+        default=os.environ.get("DASHSCOPE_API_KEY") or os.environ.get("OPENAI_API_KEY") or "",
+        help="API Key（默认读环境变量 DASHSCOPE_API_KEY 或 OPENAI_API_KEY）",
     )
     args = ap.parse_args()
 
@@ -722,43 +1053,108 @@ def main() -> int:
             chart_sig_high = _chart_signals(
                 high_c,
                 plt_mod,
-                "High-weight signals (this batch)",
+                "本批 high 权重主证据信号（柱末数字为条数）",
                 "#c0392b",
             )
         if med_c:
             chart_sig_med = _chart_signals(
                 med_c,
                 plt_mod,
-                "Appendix: medium / heuristic signals",
+                "附录：medium 启发式 / 弱证据信号（柱末数字为条数）",
                 "#2980b9",
             )
         if len(model_tier) >= 1:
             chart_model = _chart_by_model(model_tier, plt_mod)
 
-    samples: List[Tuple[str, str]] = []
-    if args.sample_headlines > 0:
-        samples = _insight_samples(rows, "high_precision", args.sample_headlines)
+    rule_summary = _rule_based_exec_summary(len(rows), tier_cnt, high_c, med_c)
+    digest_llm = _build_llm_digest_compact(len(rows), tier_cnt, high_c, med_c, cohort)
+    llm_summary: Optional[str] = None
+    if args.llm_summary:
+        key = (args.llm_api_key or "").strip()
+        if key:
+            llm_summary = _fetch_exec_summary_llm(
+                digest_llm,
+                model=args.llm_model,
+                api_key=key,
+                api_base=args.llm_api_base,
+            )
+        else:
+            print("WARNING: --llm-summary 已开启但未配置 API Key。", file=sys.stderr)
+    body_summary = llm_summary or rule_summary
+    summary_note = (
+        "以下由大模型根据上方同批次聚合摘要生成，数字请务必与下方表格交叉核对。"
+        if llm_summary
+        else "以下由离线规则根据当前批次统计即时生成。若需更自然的表述，可加参数 --llm-summary 并配置 API Key。"
+    )
+    exec_summary_html = _exec_summary_section_html(body_summary, summary_note)
+
+    charts_blocks: List[str] = []
+    if chart_tier:
+        charts_blocks.append(
+            "<h3>各分档条数</h3>"
+            f"<p class='note'><img src='{chart_tier}' alt='tier 分布'/></p>"
+        )
+    if chart_model:
+        charts_blocks.append(
+            "<h3>按请求模型堆叠</h3>"
+            f"<p class='note'><img src='{chart_model}' alt='按模型'/></p>"
+        )
+    if chart_sig_high:
+        charts_blocks.append(
+            "<h3>主证据信号 Top</h3>"
+            f"<p class='note'><img src='{chart_sig_high}' alt='high 信号'/></p>"
+        )
+    if chart_sig_med:
+        charts_blocks.append(
+            "<h3>弱证据 / 启发式信号</h3>"
+            "<p class='note'>多为单条弱提示，须与分档与其它字段共同解读。</p>"
+            f"<p class='note'><img src='{chart_sig_med}' alt='medium 信号'/></p>"
+        )
+    if charts_blocks:
+        charts_html = "\n".join(charts_blocks)
+    elif args.no_charts or plt_mod is None:
+        charts_html = "<p class='note'>未生成图表（已加 --no-charts 或未安装 matplotlib）。</p>"
+    else:
+        charts_html = "<p class='note'>本批暂无可用绘图数据。</p>"
 
     drill_html = ""
-    if args.drilldown_limit > 0:
-        drill_rows = _collect_drilldown(rows, args.drilldown_limit)
-        drill_html = _drilldown_section_html(drill_rows)
+    export_rel: Optional[str] = None
+    out_path = Path(args.output)
+    if args.drilldown_limit != 0:
+        cap_export = args.drilldown_limit if args.drilldown_limit > 0 else None
+        drill_all = _collect_drilldown(rows, cap_export)
+        total_drill = len(drill_all)
+        display_n = max(0, args.drilldown_display_max)
+        drill_show = drill_all[:display_n] if display_n else []
+        if not args.no_drilldown_export and drill_all:
+            export_path = out_path.with_name(out_path.stem + "_drilldown_full.jsonl")
+            _write_drilldown_jsonl(export_path, drill_all)
+            export_rel = export_path.name
+            print(f"Wrote drilldown export {export_path.resolve()}")
+        drill_html = _drilldown_section_html(
+            drill_show,
+            total_count=total_drill,
+            export_rel=export_rel,
+        )
+
+    insight_section_html = ""
+    if args.sample_headlines > 0:
+        insight_section_html = _insight_section_rich_html(
+            rows, "high_precision", args.sample_headlines
+        )
 
     page = _html_page(
         args.title,
-        args.input,
+        str(Path(args.input).resolve()),
         len(rows),
         tier_cnt,
         cohort,
-        chart_tier,
-        chart_model,
-        chart_sig_high,
-        chart_sig_med,
         att_html,
-        samples,
+        exec_summary_html,
+        charts_html,
         drill_html,
+        insight_section_html,
     )
-    out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(page, encoding="utf-8")
     print(f"Wrote {out_path.resolve()}")

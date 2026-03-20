@@ -100,6 +100,17 @@ def _tool_calls_summary(
     return "[Tool calls: " + ", ".join(display) + "]"
 
 
+def _list_str_for_hf_meta(values: List[str]) -> List[str]:
+    """Return ``list[str]`` with Arrow-friendly element type for HuggingFace ``datasets``.
+
+    An empty ``[]`` is often inferred as ``list<null>`` while non-empty lists use
+    ``list<string>``, which breaks multi-process ``map`` when rows differ; storing a
+    single empty string keeps dtype stable. Downstream should drop falsy entries.
+    """
+    out = [str(x).strip() for x in values if x is not None and str(x).strip()]
+    return out if out else [""]
+
+
 def _compress_head_tail(text: str, max_chars: int, head_ratio: float = 0.62) -> str:
     """If ``text`` exceeds ``max_chars``, keep head + tail with an explicit middle marker.
 
@@ -457,12 +468,12 @@ class AgentDialogNormalizeMapper(Mapper):
         if Fields.meta not in sample:
             sample[Fields.meta] = {}
         meta = sample[Fields.meta]
-        if compressed_ref[0]:
-            meta[MetaKeys.agent_dialog_history_compressed] = True
+        # Always set bool so HF Arrow struct schema matches across rows (num_proc>1)
+        meta[MetaKeys.agent_dialog_history_compressed] = bool(compressed_ref[0])
         meta[MetaKeys.agent_turn_count] = len(history)
         if self.extract_tool_skill_tags:
-            meta[MetaKeys.agent_tool_types] = _extract_tool_types(messages)
-            meta[MetaKeys.agent_skill_types] = _extract_skill_types(messages)
+            meta[MetaKeys.agent_tool_types] = _list_str_for_hf_meta(_extract_tool_types(messages))
+            meta[MetaKeys.agent_skill_types] = _list_str_for_hf_meta(_extract_skill_types(messages))
 
         last_u_idx, last_a_idx = _last_user_assistant_msg_indices(messages)
         if last_u_idx is not None:
