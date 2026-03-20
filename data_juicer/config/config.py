@@ -229,6 +229,16 @@ def init_configs(args: Optional[List[str]] = None, which_entry: object = None, l
                 "available options.",
             )
             parser.add_argument(
+                "--load_jsonl_lenient",
+                type=bool,
+                default=False,
+                help="If true, load local .jsonl/.jsonl.gz/.jsonl.zst line-by-line with "  # noqa: E251
+                "stdlib json and skip bad lines (invalid JSON or non-object rows). "
+                "Only applies when all matched input files use those jsonl suffixes; "
+                "otherwise the default HF loader is used. Same Dataset schema as normal "
+                "JSONL for downstream ops. Also enable with env DATA_JUICER_JSONL_LENIENT=1.",
+            )
+            parser.add_argument(
                 "--work_dir",
                 type=str,
                 default=None,

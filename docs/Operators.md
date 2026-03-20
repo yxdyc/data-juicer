@@ -161,7 +161,7 @@ All the specific operators are listed below, each featured with several capabili
 |----------|------|-------------|-------------|-------------|
 | csv_formatter | 🟢Stable | The class is used to load and format csv-type files. 类用于加载和格式化csv类型的文件。 | [info](operators/formatter/csv_formatter.md) | - |
 | empty_formatter | 🟢Stable | The class is used to create empty data. 类用于创建空数据。 | [info](operators/formatter/empty_formatter.md) | - |
-| json_formatter | 🟡Beta | The class is used to load and format json-type files. 类用于加载和格式化json类型的文件。 | [info](operators/formatter/json_formatter.md) | - |
+| json_formatter | 🟡Beta | Load json-type files. 加载json类型的文件。 | [info](operators/formatter/json_formatter.md) | - |
 | local_formatter | 🟢Stable | The class is used to load a dataset from local files or local directory. 类用于从本地文件或本地目录加载数据集。 | - | - |
 | parquet_formatter | 🟢Stable | The class is used to load and format parquet-type files. 该类用于加载和格式化镶木地板类型的文件。 | [info](operators/formatter/parquet_formatter.md) | - |
 | remote_formatter | 🟢Stable | The class is used to load a dataset from repository of huggingface hub. 该类用于从huggingface hub的存储库加载数据集。 | - | - |
