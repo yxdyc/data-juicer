@@ -12,7 +12,7 @@ from pydantic import PositiveInt
 from data_juicer.ops.base_op import OPERATORS, TAGGING_OPS, Mapper
 from data_juicer.utils.constant import Fields, MetaKeys
 from data_juicer.utils.lazy_loader import LazyLoader
-from data_juicer.utils.llm_semantic_ops import extract_one
+from data_juicer.utils.llm_semantic_ops import InferenceStrategy, extract_one
 from data_juicer.utils.model_utils import (
     get_model,
     prepare_model,
@@ -43,7 +43,7 @@ class LLMExtractMapper(Mapper):
         output_schema: Dict[str, str],
         api_or_hf_model: str = "gpt-4o",
         *,
-        meta_output_key: Optional[str] = None,
+        meta_output_key: Optional[str] = MetaKeys.llm_extract,
         knowledge_grounding_key: Optional[str] = None,
         knowledge_grounding_fixed: Optional[str] = None,
         is_hf_model: bool = False,
@@ -51,6 +51,8 @@ class LLMExtractMapper(Mapper):
         api_endpoint: Optional[str] = None,
         response_path: Optional[str] = None,
         system_prompt: Optional[str] = None,
+        strategy: Optional[InferenceStrategy] = None,
+        examples: Optional[str] = None,
         try_num: PositiveInt = 3,
         model_params: Optional[Dict] = None,
         sampling_params: Optional[Dict] = None,
@@ -63,15 +65,19 @@ class LLMExtractMapper(Mapper):
         meta_output_key: If set, write full result to meta[meta_output_key].
         knowledge_grounding_key: Optional sample key for per-sample grounding.
         knowledge_grounding_fixed: Optional fixed grounding string.
+        strategy: Prompt strategy for extraction (direct/cot/few_shot/cot_shot).
+        examples: Optional examples text used by few-shot strategies.
         try_num: Retries on parse/API failure.
         """
         super().__init__(**kwargs)
         self.input_keys = input_keys
         self.output_schema = output_schema
-        self.meta_output_key = meta_output_key or MetaKeys.llm_extract
+        self.meta_output_key = meta_output_key
         self.knowledge_grounding_key = knowledge_grounding_key
         self.knowledge_grounding_fixed = knowledge_grounding_fixed
         self.system_prompt = system_prompt
+        self.strategy = strategy
+        self.examples = examples
         self.try_num = try_num
         self.is_hf_model = is_hf_model
         self.enable_vllm = enable_vllm
@@ -148,6 +154,8 @@ class LLMExtractMapper(Mapper):
                     model,
                     system_prompt=self.system_prompt,
                     knowledge_grounding=kg,
+                    strategy=self.strategy,
+                    examples=self.examples,
                     enable_vllm=self.enable_vllm,
                     is_hf_model=self.is_hf_model,
                     sampling_params=self.sampling_params,

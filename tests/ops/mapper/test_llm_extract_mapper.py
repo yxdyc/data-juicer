@@ -65,3 +65,23 @@ class TestLLMExtractMapper(DataJuicerTestCaseBase):
         extracted = out_list[0][Fields.meta][MetaKeys.llm_extract]
         self.assertEqual(extracted["topic"], None)
         self.assertEqual(extracted["sentiment"], None)
+
+    def test_extract_empty_input_flatten_to_meta(self):
+        """When meta_output_key is None, fields are flattened into meta."""
+        ds_list = [{"text": ""}]
+        dataset = Dataset.from_list(ds_list)
+        op = LLMExtractMapper(
+            input_keys=["text"],
+            output_schema={"topic": "Main topic.", "sentiment": "Sentiment."},
+            api_or_hf_model=self.api_or_hf_model,
+            meta_output_key=None,
+        )
+        result = dataset.map(op.process, batch_size=1)
+        out_list = result.to_list()
+        self.assertEqual(len(out_list), 1)
+        meta = out_list[0][Fields.meta]
+        self.assertIn("topic", meta)
+        self.assertIn("sentiment", meta)
+        self.assertEqual(meta["topic"], None)
+        self.assertEqual(meta["sentiment"], None)
+        self.assertNotIn(MetaKeys.llm_extract, meta)
