@@ -12,10 +12,7 @@ from pydantic import PositiveInt
 from data_juicer.ops.base_op import OPERATORS, Filter
 from data_juicer.utils.constant import Fields, StatsKeys
 from data_juicer.utils.lazy_loader import LazyLoader
-from data_juicer.utils.llm_semantic_ops import (
-    InferenceStrategy,
-    condition_filter_one,
-)
+from data_juicer.utils.llm_semantic_ops import InferenceStrategy, condition_filter_one
 from data_juicer.utils.model_utils import (
     get_model,
     prepare_model,
