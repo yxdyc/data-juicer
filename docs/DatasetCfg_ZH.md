@@ -106,6 +106,26 @@ validators:
       language: "str"
 ```
 
+### JSONL 样本级容错（跳过坏行）
+
+若少数行损坏、或整行无法被 HF/ujson 解析，可使用 **宽松 JSONL 加载**：用标准库逐行 ``json.loads``，解析失败 **仅跳过该行** 并打日志，其余样本照常进入流水线（下游算子仍面对与普通 JSONL 一致的 ``datasets.Dataset``）。
+
+**启用方式（二选一）：**
+
+```yaml
+load_jsonl_lenient: true
+```
+
+```bash
+DATA_JUICER_JSONL_LENIENT=1 dj-process --config path/to/config.yaml
+```
+
+**限制：**
+
+- 仅当本次匹配到的输入文件 **全部为** ``.jsonl`` / ``.jsonl.gz`` / ``.jsonl.zst`` 时生效；若目录里还有 ``.json`` 等，会自动 **回退** 到默认 HF 加载（并在日志中说明）。
+- 适合 **DefaultExecutor** 本地 jsonl；与 Parquet 无关。
+- 跳过的行请搜日志前缀 ``[lenient jsonl]``。
+
 ### JSON / JSONL 加载报错 ``Value is too big!``
 
 本地 JSONL 由 HuggingFace ``datasets`` 解析时可能走 ``ujson``；若某条样本里含有 **超出 ujson 表示范围的整数**（例如极长的数字型 ID），会报错 ``ValueError: Value is too big!``。这与单行文本长短无关，多半是 **数字字段** 问题。

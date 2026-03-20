@@ -35,7 +35,11 @@ keep_hashes_in_res_ds: false                                # whether to keep th
 export_extra_args: {}                                       # Other optional arguments for exporting in dict. For example, the key mapping info for exporting the WebDataset format.
 # If loading local JSONL fails with ujson ValueError: Value is too big!, run with:
 #   DATA_JUICER_USE_STDLIB_JSON=1 dj-process --config your.yaml
+# Per-line tolerance (stdlib json, skip bad lines; jsonl-only inputs), see DatasetCfg:
+#   load_jsonl_lenient: true
+#   # or: DATA_JUICER_JSONL_LENIENT=1
 load_dataset_kwargs: {}                                     # extra kwargs passed to datasets.load_dataset(). Useful for format-specific options, e.g. chunksize (JSON), columns (Parquet), delimiter (CSV).
+load_jsonl_lenient: false                                    # if true, stream jsonl with stdlib json and skip malformed lines (requires all matched files to be .jsonl/.jsonl.gz/.jsonl.zst)
 
 auto_op_parallelism: true                                   # whether to automatically set num_proc according to system resources. It is true in default.
 np: 4                                                       # number of subprocess to process your dataset
