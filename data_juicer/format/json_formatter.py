@@ -59,30 +59,38 @@ class JsonFormatter(LocalFormatter):
         if not lenient:
             return super().load_dataset(num_proc, global_cfg)
 
-        other_exts = [ext for ext in self.data_files if ext not in JSONL_LENIENT_EXTENSIONS]
-        if other_exts:
-            logger.warning(
-                f"[lenient jsonl] Found non-jsonl extensions {other_exts}; "
-                "falling back to the default HuggingFace JSON loader. "
-                "Put pure-jsonl inputs in a separate directory or set "
-                "`suffixes` to jsonl only."
-            )
-            return super().load_dataset(num_proc, global_cfg)
+        # Stream jsonl shards only; skipping .json avoids HF/ujson "too big".
+        jsonl_only_files = {}
+        skipped_by_ext = {}
+        for ext, paths in self.data_files.items():
+            if ext in JSONL_LENIENT_EXTENSIONS:
+                jsonl_only_files[ext] = paths
+            else:
+                skipped_by_ext[ext] = paths
+        if skipped_by_ext:
+            for ext, paths in sorted(skipped_by_ext.items()):
+                n = len(paths)
+                logger.warning(
+                    f"[lenient jsonl] Ignoring {n} file(s) {ext!r}; " f"lenient mode only reads jsonl* shards."
+                )
 
         file_ext_pairs = []
-        for ext, files in sorted(self.data_files.items()):
+        for ext, files in sorted(jsonl_only_files.items()):
             for fp in sorted(files):
                 file_ext_pairs.append((fp, ext))
 
         if not file_ext_pairs:
+            msg = "[lenient jsonl] No .jsonl/.jsonl.gz/.jsonl.zst matched; " "using default HuggingFace JSON loader."
+            logger.warning(msg)
             return super().load_dataset(num_proc, global_cfg)
 
-        logger.info("[lenient jsonl] Streaming JSONL with stdlib json; bad lines are " "skipped (warnings per line).")
+        nsh = len(file_ext_pairs)
+        logger.info(f"[lenient jsonl] ACTIVE: streaming {nsh} jsonl shard(s) " f"with stdlib json (bad lines skipped).")
 
         _num_proc = self.kwargs.pop("num_proc", 1)
         num_proc_eff = num_proc or _num_proc
         if num_proc_eff != 1:
-            logger.info("[lenient jsonl] Single-threaded load stream; " "ignoring num_proc>1.")
+            logger.info("[lenient jsonl] Single-threaded load; ignoring num_proc>1.")
 
         ds = dataset_from_lenient_jsonl_files(
             file_ext_pairs,

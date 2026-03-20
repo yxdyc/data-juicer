@@ -122,7 +122,7 @@ DATA_JUICER_JSONL_LENIENT=1 dj-process --config path/to/config.yaml
 
 **限制：**
 
-- 仅当本次匹配到的输入文件 **全部为** ``.jsonl`` / ``.jsonl.gz`` / ``.jsonl.zst`` 时生效；若目录里还有 ``.json`` 等，会自动 **回退** 到默认 HF 加载（并在日志中说明）。
+- 只会读 ``.jsonl`` / ``.jsonl.gz`` / ``.jsonl.zst``；同目录下其它后缀（如 ``.json``）会被 **跳过** 并打警告，**不再** 整体回退到 HF/ujson（避免再次出现 ``Value is too big!``）。需要时可设 ``suffixes: ['.jsonl']``。
 - 适合 **DefaultExecutor** 本地 jsonl；与 Parquet 无关。
 - 跳过的行请搜日志前缀 ``[lenient jsonl]``。
 

@@ -125,7 +125,7 @@ DATA_JUICER_JSONL_LENIENT=1 dj-process --config path/to/config.yaml
 
 **Constraints:**
 
-- Applies only when **all** matched input files are ``.jsonl`` / ``.jsonl.gz`` / ``.jsonl.zst``. If ``.json`` (etc.) is present in the same match set, the loader **falls back** to the default HF JSON path and logs a warning—use a jsonl-only directory or narrow ``suffixes``.
+- Only ``.jsonl`` / ``.jsonl.gz`` / ``.jsonl.zst`` shards are read. Other matched files (e.g. ``.json`` in the same folder) are **skipped** with a warning so the loader does **not** fall back to HuggingFace/ujson (which would hit ``Value is too big!`` again). Use ``suffixes: ['.jsonl']`` if needed.
 - Intended for **DefaultExecutor** local JSONL; unrelated to Parquet.
 - Search logs for ``[lenient jsonl]`` for skipped lines.
 
