@@ -46,13 +46,35 @@ class VideoUndistortMapper(Mapper):
 
         super().__init__(*args, **kwargs)
 
-        opencv_contrib_python_exist_code = subprocess.run(["pip", "show", "opencv-contrib-python"])
-        # This is written to fix version issues with Numpy
-        if opencv_contrib_python_exist_code.returncode == 1:  # not exist
+        # check if only opencv-contrib-python is installed
+        opencv_packages = subprocess.run(["pip", "list"], capture_output=True, text=True, check=True)
+        installed_opencv = [
+            line.split()[0] for line in opencv_packages.stdout.splitlines() if line.startswith("opencv")
+        ]
+
+        # if not, uninstall all opencv-related modules and reinstall opencv-contrib-python
+        if set(installed_opencv) != {"opencv-contrib-python"}:
+            # uninstall all opencv-related modules
+            subprocess.run(
+                [
+                    "pip",
+                    "uninstall",
+                    "-y",
+                    "opencv-python",
+                    "opencv-python-headless",
+                    "opencv-contrib-python",
+                    "opencv-contrib-python-headless",
+                ],
+                check=False,
+            )
+
+            # reinstall opencv-contrib-python
             LazyLoader.check_packages(["opencv-contrib-python"])
+
+            # fix the version of numpy
             subprocess.run(["pip", "install", "numpy==1.26.4"], check=True)
 
-        import cv2
+        cv2 = LazyLoader("cv2", "opencv-contrib-python")
 
         self.VideoCapture = cv2.VideoCapture
         self.CAP_PROP_FRAME_HEIGHT = cv2.CAP_PROP_FRAME_HEIGHT
